@@ -25,6 +25,30 @@ const DEX_MILESTONES = [
   [60, 'caramelo', 2, '2 Caramelos Raros'],
 ];
 
+// Movimiento del entrenador (coordenadas de mundo, 1 = radio de una casilla).
+export const AV_HOME = { x: -9.3, z: 4.4 };
+export const AV_SPEED = 5.5;
+const WALK_R = 13.2;
+const ORB_R = 1.15;
+// Carrusel de la Zona Safari.
+export const CAROUSEL = { cx: 0, cz: 0.6, r: 3.5, rot: 0.3, pen: 9.4, speed: 5.2, grab: 1.05 };
+
+function clampCircle(x, z, r, cx = 0, cz = 0) {
+  const dx = x - cx, dz = z - cz;
+  const d = Math.hypot(dx, dz);
+  if (d <= r) return [x, z];
+  return [cx + (dx / d) * r, cz + (dz / d) * r];
+}
+
+function stepToward(a, dt) {
+  const dx = a.tx - a.x, dz = a.tz - a.z;
+  const d = Math.hypot(dx, dz);
+  if (d < 0.01) return false;
+  const st = (AV_SPEED * dt) / 1000;
+  if (d <= st) { a.x = a.tx; a.z = a.tz; } else { a.x += (dx / d) * st; a.z += (dz / d) * st; }
+  return true;
+}
+
 export const AVATARS = ['pikachu', 'eevee', 'charmander', 'squirtle', 'bulbasaur', 'meowth', 'gastly', 'riolu', 'togepi', 'mimikyu', 'froakie', 'munchlax'];
 
 export class Player {
@@ -62,6 +86,9 @@ export class Player {
     this.dirty = true;
     this.brain = null;
     this.stats = { rerolls: 0, bought: 0, captured: 0, shinies: 0, evolutions: 0, wins: 0 };
+    this.av = { x: AV_HOME.x, z: AV_HOME.z, tx: AV_HOME.x, tz: AV_HOME.z };
+    this.avMoved = true;
+    this.orbs = [];
   }
   all() { return [...this.board, ...this.bench.filter(Boolean)]; }
   maxBoard() { return this.level + (this.badges.includes('mochila') ? 1 : 0); }
@@ -138,11 +165,12 @@ export class GameRoom {
   tick(dt = TICK_MS) {
     if (this.phase === 'lobby' || this.phase === 'ended') { this.flush(); return; }
     this.time += dt;
+    if (this.phase !== 'safari') this.tickWalk(dt);
     switch (this.phase) {
       case 'planning': this.tickPlanning(); break;
       case 'combat': this.tickCombat(dt); break;
       case 'results': if (this.time >= this.phaseEnd) this.nextRound(); break;
-      case 'safari': this.tickSafari(); break;
+      case 'safari': this.tickSafari(dt); break;
     }
     this.flush();
   }
@@ -278,7 +306,8 @@ export class GameRoom {
       case 'move': this.move(p, msg.uid, msg.to); break;
       case 'equip': this.equip(p, msg.idx | 0, msg.uid); break;
       case 'badge': this.pickBadge(p, msg.id); break;
-      case 'safari': this.safariPick(p, msg.id); break;
+      case 'safari': this.carouselChase(p, msg.id); break;
+      case 'walk': this.walk(p, +msg.x, +msg.z); break;
       case 'capture': this.tryCapture(p, +msg.q || 0); break;
       case 'dynamax': this.dynamax(p, msg.uid); break;
       case 'ready': if (this.phase === 'planning') { p.ready = !!msg.v; this.roomDirty = true; } break;
@@ -292,6 +321,77 @@ export class GameRoom {
       case 'autoplace': this.autoPlace(p); break;
       case 'cheat': if (this.options.debug) this.cheat(p, msg); break;
     }
+  }
+
+  // ───────────────────────── Entrenador y botín ─────────────────────────
+  walk(p, x, z) {
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return;
+    if (this.phase === 'safari') {
+      const a = this.safari?.avs[p.id];
+      if (!a || this.time < a.rel) return;
+      a.want = null;
+      [a.tx, a.tz] = clampCircle(x, z, CAROUSEL.pen + 0.6, CAROUSEL.cx, CAROUSEL.cz);
+      return;
+    }
+    [p.av.tx, p.av.tz] = clampCircle(x, z, WALK_R);
+    p.avMoved = true;
+  }
+
+  tickWalk(dt) {
+    for (const p of this.players) {
+      if (!p.alive) continue;
+      if (p.isAi) {
+        if (p.orbs.length) {
+          let best = null, bd = 1e9;
+          for (const o of p.orbs) { const d = Math.hypot(o.x - p.av.x, o.z - p.av.z); if (d < bd) { bd = d; best = o; } }
+          p.av.tx = best.x; p.av.tz = best.z;
+        } else if (this.rng() < 0.004) {
+          [p.av.tx, p.av.tz] = clampCircle(AV_HOME.x + this.rng.range(-1.8, 1.8), AV_HOME.z + this.rng.range(-2.5, 2.5), WALK_R);
+        }
+      }
+      if (stepToward(p.av, dt)) p.avMoved = true;
+      for (let i = p.orbs.length - 1; i >= 0; i--) {
+        const o = p.orbs[i];
+        if (Math.hypot(o.x - p.av.x, o.z - p.av.z) < ORB_R) this.collectOrb(p, o);
+      }
+    }
+    // Difunde posiciones a 10 Hz.
+    if (!this.lastAvs || this.time - this.lastAvs >= 100) {
+      this.lastAvs = this.time;
+      const a = [];
+      for (const p of this.players) {
+        if (!p.avMoved) continue;
+        p.avMoved = false;
+        a.push([p.id, +p.av.x.toFixed(2), +p.av.z.toFixed(2), +p.av.tx.toFixed(2), +p.av.tz.toFixed(2)]);
+      }
+      if (a.length) this.broadcast({ t: 'avs', a });
+    }
+  }
+
+  // Deja caer una Poké Ball con botín en la isla del jugador.
+  dropOrb(p, content) {
+    // Cae en la mitad rival del tablero (vacía durante la preparación), como en TFT.
+    const orb = {
+      id: 'o' + uid(),
+      x: +this.rng.range(-5.2, 5.2).toFixed(2),
+      z: +this.rng.range(-5.4, -1.3).toFixed(2),
+      items: content.items || [],
+      gold: content.gold || 0,
+    };
+    p.orbs.push(orb);
+    this.roomDirty = true;
+    return orb;
+  }
+
+  collectOrb(p, orb) {
+    const i = p.orbs.indexOf(orb);
+    if (i < 0) return;
+    p.orbs.splice(i, 1);
+    for (const it of orb.items) this.giveItem(p, it);
+    p.gold += orb.gold;
+    this.fx(p, { kind: 'orb', id: orb.id, items: orb.items, gold: orb.gold, x: orb.x, z: orb.z });
+    p.dirty = true;
+    this.roomDirty = true;
   }
 
   // Solo en modo depuración local (?debug=1): acelera pruebas.
@@ -362,7 +462,7 @@ export class GameRoom {
         else if (kind === 'component') for (let i = 0; i < amt; i++) this.giveItem(p, this.rng.pick(COMPONENTS));
         else if (kind === 'caramelo') for (let i = 0; i < amt; i++) this.giveItem(p, 'caramelo');
         else if (kind === 'full') this.giveItem(p, this.rng.pick(FULL_ITEMS));
-        this.fx(p, { kind: 'toast', text: `📕 ¡Pokédex: ${n} especies registradas! Recompensa: ${txt}.`, big: true });
+        this.fx(p, { kind: 'toast', text: `¡Pokédex: ${n} especies registradas! Recompensa: ${txt}.`, big: true });
       }
     }
   }
@@ -518,7 +618,7 @@ export class GameRoom {
       const nu = this.makeUnit(u.line, 1, false);
       if (i >= 0) p.bench[i] = nu; else p.limbo = nu;
       if (this.pool[u.line] > 0) this.pool[u.line]--;
-      this.fx(p, { kind: 'toast', text: `🍬 ¡Un ${FORMS[nu.form].name} se une a tu equipo!` });
+      this.fx(p, { kind: 'toast', text: `¡Un ${FORMS[nu.form].name} se une a tu equipo!` });
       this.register(p, nu);
       this.checkCombine(p);
       if (p.limbo) p.limbo = null;
@@ -646,7 +746,7 @@ export class GameRoom {
         const t = this.rng.pick(Object.keys(TYPES));
         p.traitBonus[t] = (p.traitBonus[t] || 0) + 1;
         p.badgeInfo.emblema = [...(p.badgeInfo.emblema || []), t];
-        this.fx(p, { kind: 'toast', text: `🏅 ¡Emblema de tipo ${TYPES[t].name}!` });
+        this.fx(p, { kind: 'toast', text: `¡Emblema de tipo ${TYPES[t].name}!` });
         break;
       }
     }
@@ -676,6 +776,7 @@ export class GameRoom {
 
   startCombat() {
     for (const p of this.alive()) {
+      for (const o of [...p.orbs]) this.collectOrb(p, o);
       if (p.pendingBadge) this.pickBadge(p, this.rng.pick(p.pendingBadge));
       if (p.capture) { this.fx(p, { kind: 'toast', text: `¡El ${FORMS[p.capture.form].name} salvaje huyó!` }); p.capture = null; }
       if (p.board.length < p.maxBoard()) this.autoPlace(p);
@@ -771,19 +872,19 @@ export class GameRoom {
         this.gymToday = { stage: this.stage, g };
       }
       leader = this.gymToday.g;
-      title = `${leader.icon} ¡${leader.title} te desafía!`;
+      title = `¡${leader.title} te desafía!`;
       kind = 'gym';
       units = leader.units.map(([line, s, x, y, form]) => ({ line, star: Math.min(3, s + (this.stage >= 3 ? 1 : 0)), x, y, form }));
     } else if (this.stage === 4) {
       if (!this.eliteToday) this.eliteToday = this.rng.pick(ELITE);
       leader = this.eliteToday;
-      title = `${leader.icon} ¡${leader.title} te desafía!`;
+      title = `¡${leader.title} te desafía!`;
       kind = 'gym';
       units = leader.units.map(([line, s, x, y, form]) => ({ line, star: Math.min(3, s), x, y, form }));
     } else {
       if (!this.raidToday || this.raidToday.stage !== this.stage) this.raidToday = { stage: this.stage, line: this.rng.pick(RAID_BOSSES) };
       const line = this.raidToday.line;
-      title = `🔴 ¡Incursión Dinamax: ${FORMS[LINES[line].forms[0]].name} legendario!`;
+      title = `¡Incursión Dinamax: ${FORMS[LINES[line].forms[0]].name} legendario!`;
       kind = 'raid';
       boss = true;
       units = [{ line, star: this.stage >= 6 ? 3 : 2, x: 3, y: 1 }];
@@ -921,7 +1022,7 @@ export class GameRoom {
         lose(home);
         const base = this.stage === 1 ? 1 : this.playerDamage([]) ;
         hurt(home, e.lineup.kind === 'raid' ? 6 + this.stage : base + r.survivors[1].reduce((a, s) => a + s.star, 0));
-        if (this.stage === 1) { this.giveItem(home, this.rng.pick(COMPONENTS)); loot = { items: 1, consolation: true }; }
+        if (this.stage === 1) { this.dropOrb(home, { items: [this.rng.pick(COMPONENTS)] }); loot = { items: 1, consolation: true, orbs: 1 }; }
       }
     } else {
       if (r.winner === 0) {
@@ -953,29 +1054,30 @@ export class GameRoom {
 
   pveLoot(p, e) {
     const lu = e.lineup;
-    const loot = { items: 0, gold: 0 };
+    const loot = { items: 0, gold: 0, orbs: 0 };
+    const drop = (content) => { this.dropOrb(p, content); loot.orbs++; };
     if (lu.kind === 'pve') {
       const n = this.stage === 1 ? (this.round === 4 ? 2 : 1) : 2;
-      for (let i = 0; i < n; i++) this.giveItem(p, this.rng.pick(COMPONENTS));
+      for (let i = 0; i < n; i++) drop({ items: [this.rng.pick(COMPONENTS)] });
       loot.items = n;
-      if (this.round >= 3) { p.gold += 1; loot.gold = 1; }
+      if (this.round >= 3) { drop({ gold: 1 + this.rng.int(2) }); loot.gold = 1; }
       // Oportunidad de captura.
       const wild = this.rng.pick(lu.units);
       p.capture = { line: wild.line, form: formFor(wild.line, 1), shiny: this.rng() < this.shinyChance(p) * 2 };
       loot.capture = p.capture;
     } else if (lu.kind === 'gym') {
       const n = this.stage >= 4 ? 3 : 2;
-      for (let i = 0; i < n; i++) this.giveItem(p, this.rng.pick(COMPONENTS));
-      p.gold += 3;
+      for (let i = 0; i < n; i++) drop({ items: [this.rng.pick(COMPONENTS)] });
+      drop({ gold: 3 });
       loot.items = n; loot.gold = 3;
-      if (this.stage >= 3) { this.giveItem(p, 'caramelo'); loot.caramelo = 1; }
+      if (this.stage >= 3) { drop({ items: ['caramelo'] }); loot.caramelo = 1; }
     } else if (lu.kind === 'raid') {
       const line = lu.units[0].line;
       const u = this.makeUnit(line, 1, this.rng() < 0.2);
       const i = p.benchFree();
       if (i >= 0) { p.bench[i] = u; this.register(p, u); this.checkCombine(p); loot.legend = u.form; }
-      else { p.gold += 5; loot.gold = 5; }
-      for (let k = 0; k < 2; k++) this.giveItem(p, this.rng.pick(FULL_ITEMS));
+      else { drop({ gold: 5 }); loot.gold = 5; }
+      for (let k = 0; k < 2; k++) drop({ items: [this.rng.pick(FULL_ITEMS)] });
       loot.items = 2;
     }
     p.dirty = true;
@@ -994,7 +1096,7 @@ export class GameRoom {
       for (const u of p.all()) this.pool[u.line] += this.copies(u);
       p.board = []; p.bench = new Array(BENCH_SIZE).fill(null);
       this.fx(p, { kind: 'eliminated', place: p.place });
-      this.broadcast({ t: 'toast', text: `💀 ${p.name} ha sido eliminado (${p.place}º)` });
+      this.broadcast({ t: 'toast', text: `${p.name} ha sido eliminado (${p.place}º)` });
       p.dirty = true;
     }
     for (const p of this.alive()) this.checkCombine(p);
@@ -1042,7 +1144,9 @@ export class GameRoom {
     return ok;
   }
 
-  // ───────────────────────── Zona Safari (draft) ─────────────────────────
+  // ───────────────────────── Zona Safari (carrusel) ─────────────────────────
+  // Todos los entrenadores comparten arena; salen por tandas (menos vida primero)
+  // y corren a agarrar uno de los Pokémon que giran en el centro.
   startSafari() {
     const alive = this.alive();
     const n = Math.max(3, alive.length + 1);
@@ -1054,59 +1158,96 @@ export class GameRoom {
       const line = this.rng.pick(cands.length ? cands : LINES_BY_COST[1]);
       let item = this.rng.pick(COMPONENTS);
       if (this.stage >= 4 && this.rng() < 0.3) item = this.rng() < 0.5 ? 'caramelo' : this.rng.pick(FULL_ITEMS);
-      options.push({ id: 's' + i, line, form: formFor(line, 1), shiny: this.rng() < this.shinyChance(alive[0] || {}) * 1.5, item, takenBy: null });
+      options.push({ id: 's' + i, a: +((i / n) * Math.PI * 2).toFixed(4), line, form: formFor(line, 1), shiny: this.rng() < this.shinyChance(alive[0] || {}) * 1.5, item, takenBy: null });
     }
     const order = this.stage === 1 ? this.rng.shuffle([...alive]) : [...alive].sort((a, b) => a.hp - b.hp || this.rng() - 0.5);
-    this.safari = { options, order: order.map((p) => p.id), turn: -1, turnEnd: 0 };
+    const fast = this.options.fast;
+    const intro = fast ? 100 : 3200, gap = fast ? 100 : 3600;
+    const avs = {};
+    let lastRel = 0;
+    order.forEach((p, i) => {
+      const ang = Math.PI / 2 + (i / order.length) * Math.PI * 2;
+      const x = CAROUSEL.cx + Math.cos(ang) * CAROUSEL.pen, z = CAROUSEL.cz + Math.sin(ang) * CAROUSEL.pen;
+      const wave = this.stage === 1 ? 0 : Math.floor(i / 2);
+      const rel = this.time + intro + wave * gap;
+      lastRel = Math.max(lastRel, rel);
+      avs[p.id] = { x, z, tx: x, tz: z, rel, hold: null, want: null, wave };
+    });
+    this.safari = { options, order: order.map((p) => p.id), avs, rot: 0, assignAt: lastRel + (fast ? 200 : 6500), endAt: 0 };
     this.phase = 'safari';
-    this.phaseEnd = this.time + (this.options.fast ? 200 : PHASE_TIME.safariIntro);
+    this.phaseEnd = this.safari.assignAt;
     this.roomDirty = true;
   }
 
-  tickSafari() {
+  carouselPos(o) {
+    const s = this.safari;
+    const a = o.a + s.rot;
+    return [CAROUSEL.cx + Math.cos(a) * CAROUSEL.r, CAROUSEL.cz + Math.sin(a) * CAROUSEL.r];
+  }
+
+  carouselChase(p, optId) {
+    const s = this.safari;
+    const a = s?.avs[p.id];
+    if (!a || this.time < a.rel || a.hold) return;
+    const o = s.options.find((x) => x.id === optId && !x.takenBy);
+    if (o) a.want = o.id;
+  }
+
+  tickSafari(dt) {
     const s = this.safari;
     if (!s) return;
-    if (s.turn === -1) {
-      if (this.time >= this.phaseEnd) this.advanceSafari();
-      return;
+    s.rot += (CAROUSEL.rot * dt) / 1000;
+    for (const pid of s.order) {
+      const p = this.getPlayer(pid);
+      const a = s.avs[pid];
+      if (!p || !p.alive || !a) continue;
+      if (this.time < a.rel) continue;
+      if (!a.hold) {
+        if (p.isAi && (!a.want || s.options.find((o) => o.id === a.want)?.takenBy)) a.want = botSafari(this, p);
+        const w = a.want && s.options.find((o) => o.id === a.want && !o.takenBy);
+        if (w) [a.tx, a.tz] = this.carouselPos(w);
+        else if (a.want) a.want = null;
+      }
+      stepToward(a, dt);
+      if (!a.hold) {
+        for (const o of s.options) {
+          if (o.takenBy) continue;
+          const [ox, oz] = this.carouselPos(o);
+          if (Math.hypot(ox - a.x, oz - a.z) < CAROUSEL.grab) { this.carouselGrab(p, o); break; }
+        }
+      }
     }
-    if (s.turn >= s.order.length) {
-      if (this.time >= this.phaseEnd) { this.safari = null; this.nextRound(); }
-      return;
+    const aliveIds = s.order.filter((id) => this.getPlayer(id)?.alive);
+    if (!s.endAt) {
+      if (this.time >= s.assignAt) {
+        for (const pid of aliveIds) {
+          const a = s.avs[pid];
+          if (a.hold) continue;
+          const free = s.options.filter((o) => !o.takenBy);
+          if (free.length) this.carouselGrab(this.getPlayer(pid), this.rng.pick(free));
+        }
+        s.endAt = this.time + (this.options.fast ? 100 : 1800);
+      } else if (aliveIds.every((id) => s.avs[id].hold)) {
+        s.endAt = this.time + (this.options.fast ? 100 : 1800);
+      }
     }
-    const pid = s.order[s.turn];
-    const p = this.getPlayer(pid);
-    if (!p || !p.alive) { this.advanceSafari(); return; }
-    if (p.isAi && this.time >= s.botAt) {
-      const id = botSafari(this, p);
-      this.safariPick(p, id);
-      return;
-    }
-    if (this.time >= s.turnEnd) {
-      const free = s.options.filter((o) => !o.takenBy);
-      if (free.length) this.safariPick(p, this.rng.pick(free).id);
-      else this.advanceSafari();
+    if (s.endAt && this.time >= s.endAt) { this.safari = null; this.nextRound(); return; }
+    if (!this.lastCar || this.time - this.lastCar >= 100) {
+      this.lastCar = this.time;
+      this.broadcast({
+        t: 'car', rot: +s.rot.toFixed(4),
+        a: s.order.map((id) => { const a = s.avs[id]; return [id, +a.x.toFixed(2), +a.z.toFixed(2), a.hold || 0, +a.tx.toFixed(2), +a.tz.toFixed(2)]; }),
+      });
     }
   }
 
-  advanceSafari() {
+  carouselGrab(p, o) {
     const s = this.safari;
-    s.turn++;
-    if (s.turn >= s.order.length) {
-      this.phaseEnd = this.time + (this.options.fast ? 100 : 1800);
-    } else {
-      s.turnEnd = this.time + (this.options.fast ? 300 : PHASE_TIME.safariPick);
-      s.botAt = this.time + (this.options.fast ? 0 : 700 + this.rng.int(900));
-    }
-    this.roomDirty = true;
-  }
-
-  safariPick(p, optId) {
-    const s = this.safari;
-    if (!s || this.phase !== 'safari' || s.turn < 0 || s.order[s.turn] !== p.id) return false;
-    const o = s.options.find((x) => x.id === optId && !x.takenBy);
-    if (!o) return false;
+    if (!s || o.takenBy || !p) return false;
+    const a = s.avs[p.id];
+    if (!a || a.hold) return false;
     o.takenBy = p.id;
+    a.hold = o.id;
     const u = this.makeUnit(o.line, 1, o.shiny);
     if (this.pool[o.line] > 0) this.pool[o.line]--;
     const i = p.benchFree();
@@ -1115,7 +1256,7 @@ export class GameRoom {
     this.checkCombine(p);
     this.broadcast({ t: 'safariPick', pid: p.id, opt: o.id });
     p.dirty = true;
-    this.advanceSafari();
+    this.roomDirty = true;
     return true;
   }
 
@@ -1137,8 +1278,7 @@ export class GameRoom {
       stage: this.stage,
       round: this.round,
       rtype: this.rtype,
-      timeLeft: this.phase === 'safari' && this.safari && this.safari.turn >= 0 && this.safari.turn < this.safari.order.length
-        ? Math.max(0, this.safari.turnEnd - this.time) : rt,
+      timeLeft: rt,
       weather: this.weather,
       forecast: this.forecast,
       event: this.event,
@@ -1146,6 +1286,8 @@ export class GameRoom {
         id: p.id, name: p.name, avatar: p.avatar, hp: p.hp, level: p.level, gold: p.gold, streak: p.streak,
         alive: p.alive, place: p.place, isBot: p.isBot, connected: p.connected, ready: p.ready,
         fightId: p.fightId, badges: p.badges,
+        av: [+p.av.x.toFixed(2), +p.av.z.toFixed(2), +p.av.tx.toFixed(2), +p.av.tz.toFixed(2)],
+        orbs: p.orbs.map((o) => ({ id: o.id, x: o.x, z: o.z, gold: o.gold, n: o.items.length, rare: o.items.some((it) => !COMPONENTS.includes(it)) })),
         board: p.board.map((u) => ({ uid: u.uid, line: u.line, form: u.form, star: u.star, shiny: u.shiny, x: u.x, y: u.y, items: u.items, fr: u.fr })),
         bench: p.bench.map((u) => (u ? { uid: u.uid, line: u.line, form: u.form, star: u.star, shiny: u.shiny, items: u.items } : null)),
         traits: computeTraits(p.board, p.traitBonus),
@@ -1153,7 +1295,9 @@ export class GameRoom {
       safari: this.safari ? {
         options: this.safari.options,
         order: this.safari.order,
-        turn: this.safari.turn,
+        rot: this.safari.rot,
+        rel: Object.fromEntries(Object.entries(this.safari.avs).map(([id, a]) => [id, Math.max(0, a.rel - this.time)])),
+        wave: Object.fromEntries(Object.entries(this.safari.avs).map(([id, a]) => [id, a.wave])),
       } : null,
       fights: [...this.combats.values()].map((e) => ({ id: e.id, players: e.players, ended: e.ended, pve: !!e.pve, title: e.combat.title })),
     };

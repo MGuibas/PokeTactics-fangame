@@ -1,23 +1,37 @@
 // HUD de la partida: tienda, sinergias, jugadores, objetos, tooltips y modales.
 import { LINES, FORMS, formFor, moveDesc, moveOf, baseStats, LINE_LIST } from '../game/data/pokemon.js';
-import { TYPES, ROLES, TRAITS, traitInfo, typeMatchups } from '../game/data/types.js';
+import { TYPES, TRAITS, traitInfo, typeMatchups } from '../game/data/types.js';
 import { ITEMS, statText, combine, COMPONENTS } from '../game/data/items.js';
 import { WEATHERS, BADGES, EVENTS, roundType, roundsInStage, PHASE_TIME } from '../game/data/world.js';
 import { traitLevel } from '../game/traits.js';
 import { portrait } from './portraits.js';
 import { sfx } from './audio.js';
+import { icon, itemIcon, WEATHER_ICON, WEATHER_COLOR, BADGE_LOOK, EVENT_ICON } from './icons.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export const COST_COLOR = { 1: '#9aa7b8', 2: '#3fbf6a', 3: '#3c8ee8', 4: '#b25ce8', 5: '#f5b52a' };
-const COST_BG = { 1: ['#5a6478', '#39404f'], 2: ['#3a8a58', '#234a36'], 3: ['#3a6aa8', '#22385e'], 4: ['#7a4aa8', '#3e2660'], 5: ['#b88a2a', '#5e4210'] };
-const RT_ICON = { pvp: '⚔️', pve: '🌿', safari: '🦁' };
+const COST_BG = { 1: ['#5a6478', '#2f3544'], 2: ['#3a8a58', '#1e4230'], 3: ['#3a6aa8', '#1c3256'], 4: ['#7a4aa8', '#36205a'], 5: ['#b88a2a', '#553c0e'] };
 export const EMOTES = ['👍', '😂', '😡', '😭', '😎', '❤️', 'GG', '⚡'];
+const coin = (cls = '') => icon('coin', 'coin-ic ' + cls);
 
+// Insignia de tipo/rol: glifo blanco sobre su color.
+export function traitBadge(id, cls = '') {
+  const t = traitInfo(id);
+  if (!t) return '';
+  return `<span class="tb ${cls}" style="--tc:${t.color}">${icon(id)}</span>`;
+}
 function chip(id) {
   const t = traitInfo(id);
   if (!t) return '';
-  return `<span class="chip" style="--cc:${t.color}">${t.icon} ${t.name}</span>`;
+  return `<span class="chip" style="--cc:${t.color}">${icon(id)}${t.name}</span>`;
+}
+function weatherBadge(id) {
+  return `<span class="wb" style="--tc:${WEATHER_COLOR[id]}">${icon(WEATHER_ICON[id])}</span>`;
+}
+export function badgeMedal(id, big = false) {
+  const [c, g] = BADGE_LOOK[id] || ['#ffcb05', 'star'];
+  return `<span class="medal ${big ? 'big' : ''}" style="--mc:${c}">${icon(g)}</span>`;
 }
 
 export class Hud {
@@ -26,7 +40,6 @@ export class Hud {
     this.el = $('hud');
     this.tip = $('tooltip');
     this.timer = { left: 0, total: 1 };
-    this.lastPhase = '';
     this.bind();
   }
 
@@ -34,17 +47,15 @@ export class Hud {
 
   bind() {
     const g = this.game;
-    $('btn-reroll').onclick = () => { g.send({ t: 'reroll' }); };
+    $('btn-reroll').onclick = () => { g.send({ t: 'reroll' }); sfx.play('reroll'); };
     $('btn-xp').onclick = () => { g.send({ t: 'xp' }); };
     $('btn-lock').onclick = () => { g.send({ t: 'lock' }); sfx.play('click'); };
     $('btn-ready').onclick = () => g.toggleReady();
     $('btn-auto').onclick = () => { g.send({ t: 'autoplace' }); sfx.play('place'); };
-    $('btn-sound').onclick = () => {
-      const on = sfx.toggle();
-      $('btn-sound').firstChild.textContent = on ? '🔊' : '🔇';
-    };
-    $('btn-sound').firstChild.textContent = sfx.enabled ? '🔊' : '🔇';
-    $('btn-sound').oncontextmenu = (e) => { e.preventDefault(); sfx.toggleMusic(); this.toast(sfx.musicOn ? '🎵 Música activada' : '🎵 Música desactivada'); };
+    const soundIcon = () => { $('btn-sound').querySelector('.bi').outerHTML = icon(sfx.enabled ? 'soundOn' : 'soundOff', 'bi'); };
+    $('btn-sound').onclick = () => { sfx.toggle(); soundIcon(); };
+    soundIcon();
+    $('btn-sound').oncontextmenu = (e) => { e.preventDefault(); sfx.toggleMusic(); this.toast(sfx.musicOn ? 'Música activada' : 'Música desactivada'); };
     $('btn-dex').onclick = () => this.showDex();
     $('btn-emote').onclick = () => $('emote-wheel').classList.toggle('hidden');
     $('emote-wheel').innerHTML = EMOTES.map((e) => `<button data-e="${e}">${e}</button>`).join('');
@@ -79,13 +90,13 @@ export class Hud {
     $('shop-cards').addEventListener('pointerleave', () => this.hideTip());
     // Objetos: arrastrar hacia un Pokémon.
     $('items').addEventListener('pointerdown', (e) => {
-      const it = e.target.closest('.item');
+      const it = e.target.closest('.slot');
       if (!it) return;
       e.preventDefault();
       g.startItemDrag(+it.dataset.idx, e);
     });
     $('items').addEventListener('pointermove', (e) => {
-      const it = e.target.closest('.item');
+      const it = e.target.closest('.slot');
       if (!it || g.itemDrag) return;
       this.showItemTip(g.me.items[+it.dataset.idx], e.clientX, e.clientY);
     });
@@ -121,17 +132,18 @@ export class Hud {
     this.renderTraits(me.traits || {});
     this.renderItems(me.items || []);
     $('gold-val').textContent = me.gold;
-    $('level-label').textContent = `Nv. ${me.level}  ·  ${me.board.length}/${me.maxBoard}`;
+    $('level-label').innerHTML = `Nivel ${me.level} <span>${me.board.length}/${me.maxBoard}</span>`;
     const pct = me.xpNeed ? (me.xp / me.xpNeed) * 100 : 100;
     $('xp-fill').style.width = pct + '%';
     $('xp-text').textContent = me.xpNeed ? `${me.xp}/${me.xpNeed}` : 'MÁX';
-    $('reroll-cost').textContent = me.rerollCost + '💰';
+    $('reroll-cost').textContent = me.rerollCost;
     $('btn-xp').disabled = me.gold < 4 || !me.xpNeed;
     $('btn-reroll').disabled = me.gold < me.rerollCost;
     $('btn-lock').classList.toggle('on', !!me.locked);
-    $('btn-lock').textContent = me.locked ? '🔒' : '🔓';
+    $('btn-lock').innerHTML = icon(me.locked ? 'lock' : 'unlock');
+    $('btn-lock').title = me.locked ? 'Tienda bloqueada' : 'Bloquear tienda';
     const s = me.streak;
-    $('streak').textContent = s >= 2 ? `🔥 Racha ${s}` : s <= -2 ? `🧊 Racha ${-s}` : '';
+    $('streak').innerHTML = s >= 2 ? `<span class="hot">${icon('fuego')}Racha de ${s}</span>` : s <= -2 ? `<span class="cold">${icon('hielo')}Racha de ${-s}</span>` : '';
     $('btn-ready').classList.toggle('on', !!me.ready);
     $('dex-count').textContent = me.dex;
     // Botones de captura / medalla.
@@ -140,7 +152,7 @@ export class Hud {
       cap.classList.remove('hidden');
       if (cap.dataset.form !== me.capture.form) {
         cap.dataset.form = me.capture.form;
-        cap.innerHTML = `<button class="btn primary">🎯 ¡Un ${esc(FORMS[me.capture.form].name)}${me.capture.shiny ? ' ✨' : ''} salvaje! Lanzar Poké Ball</button>`;
+        cap.innerHTML = `<button class="btn primary">${icon('ball')}¡${esc(FORMS[me.capture.form].name)}${me.capture.shiny ? ' shiny' : ''} salvaje! Lanzar Poké Ball</button>`;
         cap.firstChild.onclick = () => this.game.openCapture();
       }
     } else { cap.classList.add('hidden'); cap.dataset.form = ''; }
@@ -149,7 +161,7 @@ export class Hud {
     if (me.pendingBadge && !this.game.badgeOpen) {
       bb.classList.remove('hidden');
       if (!bb.firstChild) {
-        bb.innerHTML = '<button class="btn secondary">🏅 ¡Elige tu medalla!</button>';
+        bb.innerHTML = `<button class="btn secondary">${icon('star')}Elige tu medalla</button>`;
         bb.firstChild.onclick = () => this.showBadges(me.pendingBadge);
       }
     } else { bb.classList.add('hidden'); bb.innerHTML = ''; }
@@ -159,18 +171,17 @@ export class Hud {
   renderDyna(me, room) {
     const wrap = $('dyna-wrap');
     const inFight = room?.phase === 'combat' && me.fightId && !this.game.scoutId;
-    if (!inFight || me.dyna <= 0 && !this.game.dynaUsed) { wrap.classList.add('hidden'); return; }
+    if (!inFight || (me.dyna <= 0 && !this.game.dynaUsed)) { wrap.classList.add('hidden'); return; }
     wrap.classList.remove('hidden');
     const ready = me.dyna >= me.dynaNeed;
     const b = $('btn-dyna');
     b.disabled = !ready;
     b.classList.toggle('armed', !!this.game.dynaArmed);
-    $('dyna-sub').textContent = this.game.dynaArmed ? '¡Toca uno de tus Pokémon!' : ready ? 'Pulsa y elige un Pokémon (Espacio)' : `Carga ${Math.floor(me.dyna)}/${me.dynaNeed}`;
+    $('dyna-sub').textContent = this.game.dynaArmed ? 'Toca uno de tus Pokémon' : ready ? 'Pulsa y elige (Espacio)' : `Carga ${Math.floor(me.dyna)}/${me.dynaNeed}`;
   }
 
   renderTop(room) {
     const rt = room.rtype;
-    const isGym = rt === 'pve' && room.stage >= 2;
     const title = rt === 'pvp' ? 'Combate' : rt === 'safari' ? 'Zona Safari' : room.stage === 1 ? 'Pokémon salvajes' : room.stage <= 3 ? 'Gimnasio' : room.stage === 4 ? 'Alto Mando' : 'Incursión Dinamax';
     const phaseTxt = { planning: 'Prepárate', results: 'Resultados', ended: 'Fin' }[room.phase];
     $('stage-label').innerHTML = `Etapa ${room.stage}-${room.round} <small>${title}${phaseTxt ? ' · ' + phaseTxt : ''}</small>`;
@@ -178,25 +189,23 @@ export class Hud {
     let track = '';
     for (let r = 1; r <= n; r++) {
       const t = roundType(room.stage, r);
-      const ic = t === 'pve' && room.stage >= 2 ? (room.stage >= 5 ? '🔴' : '🏟️') : RT_ICON[t];
-      track += `<span class="${r === room.round ? 'cur' : r < room.round ? 'done' : ''}">${ic}</span>`;
+      const ic = t === 'pvp' ? 'swords' : t === 'safari' ? 'paw' : room.stage === 1 ? 'planta' : room.stage >= 5 ? 'raid' : room.stage === 4 ? 'crown' : 'stadium';
+      track += `<span class="${r === room.round ? 'cur' : r < room.round ? 'done' : ''} rt-${t}">${icon(ic)}</span>`;
     }
     $('round-track').innerHTML = track;
     const w = WEATHERS[room.weather];
     const f = WEATHERS[room.forecast];
-    $('weather-card').innerHTML = `<span class="ic">${w.icon}</span><div><div class="t">${w.name}</div><div class="s">Próximo: ${f.icon} ${f.name}</div></div>`;
+    $('weather-card').innerHTML = `${weatherBadge(room.weather)}<div><div class="t">${w.name}</div><div class="s">Próximo: ${f.name}</div></div>`;
     const ev = room.event ? EVENTS[room.event.id] : null;
     $('event-card').classList.toggle('hidden', !ev);
     if (ev) {
-      const extra = room.event.type ? ` ${TYPES[room.event.type].icon}` : '';
-      $('event-card').innerHTML = `<span class="ic">${ev.icon}</span><div><div class="t">${ev.name}${extra}</div><div class="s">Noticias del Profesor</div></div>`;
+      const ic = room.event.type ? traitBadge(room.event.type) : `<span class="wb" style="--tc:#ffcb05">${icon(EVENT_ICON[room.event.id] || 'news')}</span>`;
+      const name = room.event.type ? `${ev.name} de ${TYPES[room.event.type].name}` : ev.name;
+      $('event-card').innerHTML = `${ic}<div><div class="t">${name}</div><div class="s">Noticias del Profesor</div></div>`;
     }
     const total = room.phase === 'planning' ? (room.stage === 1 ? PHASE_TIME.planningShort : PHASE_TIME.planning)
-      : room.phase === 'combat' ? PHASE_TIME.combatMax : room.phase === 'safari' ? PHASE_TIME.safariPick : PHASE_TIME.results;
+      : room.phase === 'combat' ? PHASE_TIME.combatMax : room.phase === 'safari' ? Math.max(1, room.timeLeft) : PHASE_TIME.results;
     this.timer = { left: room.timeLeft, total, at: performance.now() };
-    if (room.phase !== this.lastPhase) {
-      this.lastPhase = room.phase;
-    }
   }
 
   tick() {
@@ -206,10 +215,12 @@ export class Hud {
     const fill = $('timer-fill');
     fill.style.width = k * 100 + '%';
     fill.classList.toggle('warn', left < 5000);
+    const sec = Math.ceil(left / 1000);
+    if (this._sec !== sec) { this._sec = sec; $('timer-num').textContent = left > 0 ? sec : ''; }
   }
 
   renderShop(me) {
-    const key = JSON.stringify(me.shop) + me.gold + '|' + me.board.map((u) => u.line + u.star).join() + me.bench.map((u) => u ? u.line + u.star : '').join();
+    const key = JSON.stringify(me.shop) + me.gold + '|' + me.board.map((u) => u.line + u.star).join() + me.bench.map((u) => (u ? u.line + u.star : '')).join();
     if (this._shopKey === key) return;
     this._shopKey = key;
     const owned = {};
@@ -222,14 +233,15 @@ export class Hud {
       const f = FORMS[formFor(s.line, 1)];
       const cant = me.gold < l.cost;
       const n = owned[s.line] || 0;
-      const dots = n ? `<div class="own">${[0, 1].map((k) => `<b class="${k < n ? 'on' : ''}"></b>`).join('')}</div>` : '';
+      const dots = n ? `<div class="own" title="Copias que tienes">${[0, 1].map((k) => `<b class="${k < n ? 'on' : ''}"></b>`).join('')}</div>` : '';
       const [b1, b2] = COST_BG[l.cost];
       return `<div class="card ${cant ? 'cant' : ''} ${n >= 2 ? 'hot' : ''} ${s.shiny ? 'shiny' : ''}" data-slot="${i}" style="--cc:${COST_COLOR[l.cost]};--bg1:${b1};--bg2:${b2}">
         <div class="por"><img src="${portrait(f.id, s.shiny)}" alt=""/>
-          <div class="types">${[...f.types, f.role].map((t) => `<i style="background:${traitInfo(t).color}cc">${traitInfo(t).icon} ${traitInfo(t).name}</i>`).join('')}</div>
-          ${s.shiny ? '<span class="shinytag">✨</span>' : ''}${dots}
+          <div class="types">${[...f.types, f.role].map((t) => `<i style="--tc:${traitInfo(t).color}">${icon(t)}<span>${traitInfo(t).name}</span></i>`).join('')}</div>
+          ${s.shiny ? `<span class="shinytag">${icon('sparkle')}</span>` : ''}${dots}
+          ${n >= 2 ? `<span class="evo-tag">${icon('up')}Evoluciona</span>` : ''}
         </div>
-        <div class="bottom"><span>${esc(f.name)}</span><span class="cost"><span class="coin" style="width:13px;height:13px;border-width:1px"></span>${l.cost}</span></div>
+        <div class="bottom"><span class="nm">${esc(f.name)}</span><span class="cost">${coin()}${l.cost}</span></div>
       </div>`;
     }).join('');
   }
@@ -242,41 +254,42 @@ export class Hud {
     list.sort((a, b) => b.lv - a.lv || b.n - a.n);
     $('traits').innerHTML = list.map(({ id, n, lv }) => {
       const t = traitInfo(id);
-      const th = TRAITS[id].th.map((x, i) => (i < lv ? `<b>${x}</b>` : x)).join(' › ');
-      const maxLv = TRAITS[id].th.length;
-      return `<div class="trait ${lv ? 'on' : ''} ${lv >= 2 ? 'lv2' : ''} ${lv >= maxLv && maxLv > 1 ? 'lv3' : ''}" data-id="${id}" data-n="${n}" style="--tc:${t.color}">
-        <div class="hex">${t.icon}</div><span class="cnt">${n}</span><div><div>${t.name}</div><div class="th">${th}</div></div></div>`;
-    }).join('');
+      const th = TRAITS[id].th;
+      const next = th.find((x) => x > n);
+      const maxLv = th.length;
+      const tier = lv >= maxLv && maxLv > 1 ? 'gold' : lv >= 2 ? 'silver' : lv ? 'bronze' : '';
+      return `<div class="trait ${lv ? 'on' : ''} ${tier}" data-id="${id}" data-n="${n}" style="--tc:${t.color}">
+        <div class="hex">${icon(id)}</div>
+        <div class="tt"><div class="tn">${t.name}</div><div class="th">${th.map((x, i) => `<i class="${i < lv ? 'on' : ''}">${x}</i>`).join('')}</div></div>
+        <span class="cnt">${n}${next ? `<small>/${next}</small>` : ''}</span></div>`;
+    }).join('') || '<div class="trait-empty">Coloca Pokémon en el tablero para activar sinergias</div>';
   }
 
   renderItems(items) {
     const key = items.join(',');
     if (this._itemsKey === key) return;
     this._itemsKey = key;
-    $('items').innerHTML = items.map((id, i) => {
-      const d = ITEMS[id];
-      return `<div class="item ${d.component || d.consumable ? '' : 'full'}" data-idx="${i}" style="--ic:${d.color};--ic2:${d.color2 || d.color}">${d.icon}</div>`;
-    }).join('') || '<span class="muted" style="font-size:11px;grid-column:1/-1;padding:4px">Sin objetos</span>';
+    $('items').innerHTML = items.map((id, i) => `<div class="slot" data-idx="${i}">${itemIcon(ITEMS[id])}</div>`).join('')
+      || '<span class="muted empty-items">Sin objetos</span>';
   }
 
   renderPlayers(room, me) {
     const opp = this.game.currentOpponent();
     const sorted = [...room.players].sort((a, b) => (b.alive - a.alive) || b.hp - a.hp || a.place - b.place);
-    const key = JSON.stringify(sorted.map((p) => [p.id, p.hp, p.level, p.alive, p.connected, p.ready])) + opp + this.game.scoutId;
+    const key = JSON.stringify(sorted.map((p) => [p.id, p.hp, p.level, p.alive, p.connected, p.ready])) + opp + this.game.scoutId + room.phase;
     if (this._plKey === key) return;
     this._plKey = key;
-    const el = $('players');
-    const emotes = {};
-    for (const e of el.querySelectorAll('.emote')) emotes[e.parentElement.dataset.id] = e;
-    el.innerHTML = sorted.map((p) => {
-      const av = portrait(p.avatar === 'pikachu' ? 'pikachu' : p.avatar, false);
+    $('players').innerHTML = sorted.map((p, i) => {
       const hp = Math.max(0, p.hp);
+      const tags = [];
+      if (p.isBot) tags.push('<i class="tag">BOT</i>');
+      if (!p.connected && !p.isBot) tags.push(`<i class="tag off">${icon('plug')}</i>`);
       return `<div class="pl ${p.id === me.id ? 'me' : ''} ${p.alive ? '' : 'dead'} ${this.game.scoutId === p.id ? 'scouted' : ''}" data-id="${p.id}" title="Ver tablero de ${esc(p.name)}">
-        ${p.id === opp ? '<span class="vs">⚔️</span>' : ''}
-        <div class="av"><img src="${av}" alt=""/></div>
-        <div class="info"><div class="nm">${p.isBot ? '🤖 ' : ''}${!p.connected && !p.isBot ? '📴 ' : ''}${esc(p.name)}</div>
-          <div class="hpbar"><i style="width:${hp}%"></i></div><div class="lvl">Nv. ${p.level}${p.alive ? '' : ` · ${p.place}º`}${p.ready && room.phase === 'planning' ? ' · ✅' : ''}</div></div>
-        <div class="hpv">${hp}</div>
+        <span class="rk">${p.alive ? i + 1 : p.place}</span>
+        ${p.id === opp ? `<span class="vs">${icon('swords')}</span>` : ''}
+        <div class="av"><img src="${portrait(p.avatar, false)}" alt=""/><span class="lv">${p.level}</span></div>
+        <div class="info"><div class="nm">${esc(p.name)} ${tags.join('')}${p.ready && room.phase === 'planning' ? `<span class="rd">${icon('check')}</span>` : ''}</div>
+          <div class="hpbar"><i style="width:${hp}%" class="${hp < 30 ? 'low' : ''}"></i><span>${p.alive ? hp : icon('skull')}</span></div></div>
       </div>`;
     }).join('');
   }
@@ -321,27 +334,24 @@ export class Hud {
       const l = LINES[f.line];
       const st = baseStats(f.line, f.id, u.star);
       const m = moveOf(f, u.star);
-      const types = f.types.map((t) => {
-        const mu = typeMatchups(t);
-        return `${chip(t)}`;
-      }).join('');
-      const strong = f.types.flatMap((t) => typeMatchups(t).strong);
+      const strong = [...new Set(f.types.flatMap((t) => typeMatchups(t).strong))];
       const next = l.forms[u.star] && l.forms[u.star] !== f.id && u.star < 3 ? FORMS[l.forms[u.star]]?.name : null;
       const evoTxt = f.line === 'eevee' && u.star === 1 ? 'Evoluciona según tu tipo dominante' : next ? `Evoluciona a ${next}` : u.star < 3 ? 'Sube de estrellas' : '';
-      const items = (u.items || []).map((it) => `<div class="sub">${ITEMS[it].icon} <b>${ITEMS[it].name}</b>: ${ITEMS[it].desc}</div>`).join('');
+      const items = (u.items || []).map((it) => `<div class="tip-item">${itemIcon(ITEMS[it], true)}<div><b>${ITEMS[it].name}</b> ${ITEMS[it].desc}</div></div>`).join('');
+      const stat = (lbl, v) => `<span><i>${lbl}</i>${v}</span>`;
       this.tip.innerHTML = `
-        <h4>${u.shiny ? '✨' : ''}${esc(f.name)} <span style="color:${COST_COLOR[l.cost]}">${'★'.repeat(u.star)}</span> <span class="sub">· ${l.cost}💰</span></h4>
-        <div class="row">${types}${chip(f.role)}</div>
-        ${strong.length ? `<div class="sub">Súper eficaz contra: ${[...new Set(strong)].map((t) => TYPES[t].icon).join(' ')}</div>` : ''}
+        <h4>${esc(f.name)} <span class="stars" style="color:${COST_COLOR[l.cost]}">${'★'.repeat(u.star)}</span>${u.shiny ? `<span class="shiny-tag">${icon('sparkle')}Shiny</span>` : ''}<span class="cost">${coin()}${l.cost}</span></h4>
+        <div class="row">${f.types.map(chip).join('')}${chip(f.role)}</div>
+        ${strong.length ? `<div class="sub se">Súper eficaz contra ${strong.map((t) => traitBadge(t, 'sm')).join('')}</div>` : ''}
         <div class="stats">
-          <span>❤️ ${u.maxHp ? `${u.hp | 0}/${u.maxHp}` : st.hp}</span><span>⚔️ ${st.atk}</span><span>⚡ ${st.as}</span>
-          <span>🛡️ ${st.def}</span><span>💠 ${st.mdef}</span><span>🎯 ${st.range}</span>
-          <span>💧 ${st.mana0}/${st.mana}</span>${u.fr ? `<span>💞 ${Math.min(5, u.fr)}/5</span>` : ''}${u.shiny ? '<span>✨ +15%</span>' : ''}
+          ${stat('PS', u.maxHp ? `${u.hp | 0}/${u.maxHp}` : st.hp)}${stat('Ataque', st.atk)}${stat('Vel. ataque', st.as)}
+          ${stat('Defensa', st.def)}${stat('Def. Esp.', st.mdef)}${stat('Alcance', st.range)}
+          ${stat('PP', `${st.mana0}/${st.mana}`)}${u.fr ? stat('Amistad', `${Math.min(5, u.fr)}/5`) : ''}${u.shiny ? stat('Shiny', '+15%') : ''}
         </div>
-        <div class="move"><b>${esc(m.name)}</b> ${TYPES[m.type] ? TYPES[m.type].icon : ''}<br>${moveDesc(f, u.star)}</div>
-        ${f.passive === 'disfraz' ? '<div class="sub">🎭 Disfraz: bloquea el primer golpe recibido.</div>' : ''}
+        <div class="move"><div class="mh">${traitBadge(m.type, 'sm')}<b>${esc(m.name)}</b></div>${moveDesc(f, u.star)}</div>
+        ${f.passive === 'disfraz' ? '<div class="sub">Disfraz: bloquea el primer golpe recibido.</div>' : ''}
         ${items}
-        ${evoTxt ? `<div class="sub" style="margin-top:4px">✨ ${evoTxt}${shop ? ' (3 copias)' : ''}</div>` : ''}`;
+        ${evoTxt ? `<div class="sub evo">${icon('up')}${evoTxt}${shop ? ' con 3 copias' : ''}</div>` : ''}`;
     }
     this.place(x, y);
   }
@@ -354,16 +364,16 @@ export class Hud {
       this.tipKey = key;
       let recipes = '';
       if (d.component) {
-        recipes = '<div class="sub" style="margin-top:6px">Combina con:</div>' + COMPONENTS.map((c) => {
+        recipes = '<div class="sub" style="margin-top:6px">Combina con:</div><div class="recipes">' + COMPONENTS.map((c) => {
           const r = ITEMS[combine(id, c)];
-          return `<div class="sub">${ITEMS[c].icon} → ${r.icon} ${r.name}</div>`;
-        }).join('');
+          return `<div>${itemIcon(ITEMS[c], true)}<span class="arrow">→</span>${itemIcon(r, true)}<span>${r.name}</span></div>`;
+        }).join('') + '</div>';
       }
-      this.tip.innerHTML = `<h4>${d.icon} ${esc(d.name)}</h4>
+      this.tip.innerHTML = `<h4>${itemIcon(d, true)} ${esc(d.name)}</h4>
         ${d.stats ? `<div class="sub">${statText(d.stats)}</div>` : ''}
         <div style="margin-top:4px">${d.desc}</div>
-        ${d.from ? `<div class="sub" style="margin-top:4px">Receta: ${ITEMS[d.from[0]].icon} + ${ITEMS[d.from[1]].icon}</div>` : ''}${recipes}
-        <div class="sub" style="margin-top:6px">Arrástralo sobre un Pokémon para equiparlo.</div>`;
+        ${d.from ? `<div class="sub recipe">Receta: ${itemIcon(ITEMS[d.from[0]], true)} + ${itemIcon(ITEMS[d.from[1]], true)}</div>` : ''}${recipes}
+        <div class="sub hint">Arrástralo sobre un Pokémon para equiparlo.</div>`;
     }
     this.place(x, y);
   }
@@ -378,10 +388,10 @@ export class Hud {
       const lines = LINE_LIST.filter((l) => l.types.includes(id) || l.role === id);
       const mine = new Set([...this.game.me.board, ...this.game.me.bench.filter(Boolean)].map((u) => u.line));
       const onBoard = new Set(this.game.me.board.map((u) => u.line));
-      this.tip.innerHTML = `<h4>${t.icon} ${t.name} <span class="sub">(${n})</span></h4>
+      this.tip.innerHTML = `<h4>${traitBadge(id)} ${t.name} <span class="sub">(${n})</span></h4>
         <div>${tr.desc}</div>
-        ${tr.th.map((x, i) => `<div class="lv ${i < lv ? 'on' : ''}">(${x}) ${tr.lv[i]}</div>`).join('')}
-        <div class="row" style="margin-top:6px">${lines.map((l) => `<img src="${portrait(l.forms[0], false)}" title="${FORMS[l.forms[0]].name}" style="width:34px;height:34px;border-radius:8px;background:${onBoard.has(l.id) ? '#4fd36b55' : mine.has(l.id) ? '#ffffff22' : '#00000044'};border:2px solid ${COST_COLOR[l.cost]}"/>`).join('')}</div>`;
+        ${tr.th.map((x, i) => `<div class="lv ${i < lv ? 'on' : ''}"><b>${x}</b> ${tr.lv[i]}</div>`).join('')}
+        <div class="row lines">${lines.map((l) => `<img src="${portrait(l.forms[0], false)}" title="${FORMS[l.forms[0]].name}" class="${onBoard.has(l.id) ? 'on' : mine.has(l.id) ? 'mine' : ''}" style="border-color:${COST_COLOR[l.cost]}"/>`).join('')}</div>`;
     }
     this.place(x, y);
   }
@@ -391,7 +401,7 @@ export class Hud {
     if (!r) return;
     const w = WEATHERS[r.weather], f = WEATHERS[r.forecast];
     this.tipKey = 'w';
-    this.tip.innerHTML = `<h4>${w.icon} ${w.name}</h4><div>${w.desc}</div><div class="sub" style="margin-top:8px">Pronóstico para la próxima etapa:</div><div><b>${f.icon} ${f.name}</b>: ${f.desc}</div>`;
+    this.tip.innerHTML = `<h4>${weatherBadge(r.weather)} ${w.name}</h4><div>${w.desc}</div><div class="sub" style="margin-top:8px">Pronóstico para la próxima etapa:</div><div class="fc">${weatherBadge(r.forecast)}<div><b>${f.name}</b><br>${f.desc}</div></div>`;
     this.place(x, y);
   }
 
@@ -400,7 +410,7 @@ export class Hud {
     if (!r?.event) return;
     const ev = EVENTS[r.event.id];
     this.tipKey = 'e';
-    this.tip.innerHTML = `<h4>${ev.icon} ${ev.name}</h4><div>${ev.desc.replace('{type}', r.event.type ? TYPES[r.event.type].name : '')}</div>`;
+    this.tip.innerHTML = `<h4>${ev.name}</h4><div>${ev.desc.replace('{type}', r.event.type ? TYPES[r.event.type].name : '')}</div>`;
     this.place(x, y);
   }
 
@@ -408,7 +418,7 @@ export class Hud {
   banner(text, cls = '', sub = '') {
     const b = $('banner');
     b.className = cls;
-    b.innerHTML = `${text}${sub ? `<small>${sub}</small>` : ''}`;
+    b.innerHTML = `<span class="bt">${text}</span>${sub ? `<small>${sub}</small>` : ''}`;
     b.classList.remove('hidden');
     b.style.animation = 'none';
     void b.offsetWidth;
@@ -422,7 +432,7 @@ export class Hud {
     d.className = 'toast' + (big ? ' big' : '');
     d.textContent = text;
     $('toasts').appendChild(d);
-    setTimeout(() => d.remove(), 3500);
+    setTimeout(() => d.remove(), 3800);
     while ($('toasts').children.length > 4) $('toasts').firstChild.remove();
   }
 
@@ -443,10 +453,10 @@ export class Hud {
 
   showBadges(opts) {
     this.game.badgeOpen = true;
-    const box = this.modal(`<h2>🏅 Elige una medalla</h2><p>Te acompañará el resto de la partida.</p>
+    const box = this.modal(`<h2>Elige una medalla</h2><p>Te acompañará el resto de la partida.</p>
       <div class="badge-opts">${opts.map((id) => {
         const b = BADGES[id];
-        return `<div class="badge-opt" data-id="${id}"><div class="bi">${b.icon}</div><h3>${b.name}</h3><p>${b.desc}</p><div class="kind">${b.kind === 'eco' ? 'Economía' : b.kind === 'trait' ? 'Sinergia' : 'Combate'}</div></div>`;
+        return `<div class="badge-opt" data-id="${id}">${badgeMedal(id, true)}<h3>${b.name}</h3><p>${b.desc}</p><div class="kind">${b.kind === 'eco' ? 'Economía' : b.kind === 'trait' ? 'Sinergia' : 'Combate'}</div></div>`;
       }).join('')}</div><div class="row-btns"><button class="btn ghost" id="badge-later">Decidir luego</button></div>`);
     box.querySelectorAll('.badge-opt').forEach((el) => {
       el.onclick = () => { this.game.send({ t: 'badge', id: el.dataset.id }); sfx.play('badge'); this.closeModal(); };
@@ -457,22 +467,23 @@ export class Hud {
   showDex() {
     const me = this.game.me;
     const next = me.dexNext ? `Próxima recompensa con ${me.dexNext} especies.` : '¡Has conseguido todas las recompensas!';
-    const badges = me.badges.map((b) => `<span class="chip" style="--cc:#3d4c8a">${BADGES[b].icon} ${BADGES[b].name}</span>`).join(' ') || '<span class="muted">Ninguna todavía</span>';
-    this.modal(`<h2>📕 Pokédex y medallas</h2><p>Has registrado <b>${me.dex}</b> especies. ${next}</p>
-      <h3 style="text-align:left">Medallas</h3><div class="row" style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center">${badges}</div>
-      <h3 style="text-align:left;margin-top:14px">Copias restantes en la reserva</h3>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:6px">${LINE_LIST.map((l) => `<div style="background:rgba(255,255,255,.06);border-radius:10px;padding:4px;border:2px solid ${COST_COLOR[l.cost]}"><img src="${portrait(l.forms[0], false)}" style="width:48px;height:48px"/><div style="font-size:11px">${me.pool?.[l.id] ?? '?'}</div></div>`).join('')}</div>
-      <div class="row-btns"><button class="btn primary" onclick="document.getElementById('modal').classList.add('hidden')">Cerrar</button></div>`);
+    const badges = me.badges.map((b) => `<span class="badge-row">${badgeMedal(b)}${BADGES[b].name}</span>`).join('') || '<span class="muted">Ninguna todavía</span>';
+    const box = this.modal(`<h2>Pokédex y medallas</h2><p>Has registrado <b>${me.dex}</b> especies. ${next}</p>
+      <h3 class="mh3">Medallas</h3><div class="badge-list">${badges}</div>
+      <h3 class="mh3">Copias restantes en la reserva</h3>
+      <div class="pool-grid">${LINE_LIST.map((l) => `<div style="border-color:${COST_COLOR[l.cost]}"><img src="${portrait(l.forms[0], false)}"/><span>${me.pool?.[l.id] ?? '?'}</span></div>`).join('')}</div>
+      <div class="row-btns"><button class="btn primary" id="dex-close">Cerrar</button></div>`);
+    box.querySelector('#dex-close').onclick = () => this.closeModal();
   }
 
   showGameOver(msg, meId, onExit) {
     const rows = [...msg.players].sort((a, b) => a.place - b.place).map((p) => `
-      <div class="rank ${p.id === meId ? 'me' : ''}"><span class="pos">${p.place === 1 ? '🏆' : p.place + 'º'}</span>
-      <img src="${portrait(p.avatar, false)}"/><div><b>${esc(p.name)}</b><div class="sub" style="font-size:11px;color:var(--muted)">Evoluciones ${p.stats.evolutions} · Capturas ${p.stats.captured} · Shinies ${p.stats.shinies}</div></div>
+      <div class="rank ${p.id === meId ? 'me' : ''}"><span class="pos">${p.place === 1 ? icon('trophy') : p.place + 'º'}</span>
+      <img src="${portrait(p.avatar, false)}"/><div><b>${esc(p.name)}</b><div class="sub">Evoluciones ${p.stats.evolutions} · Capturas ${p.stats.captured} · Shinies ${p.stats.shinies}</div></div>
       <div class="team">${p.board.slice(0, 8).map((u) => `<img src="${portrait(u.form, u.shiny)}" title="${FORMS[u.form].name}"/>`).join('')}</div></div>`).join('');
     const me = msg.players.find((p) => p.id === meId);
-    const title = me?.place === 1 ? '🏆 ¡Eres el Campeón!' : `Has quedado ${me?.place}º`;
-    const box = this.modal(`<h2>${title}</h2><p>¡Gracias por jugar!</p><div class="ranking">${rows}</div>
+    const title = me?.place === 1 ? '¡Eres el Campeón!' : `Has quedado ${me?.place}º`;
+    const box = this.modal(`<h2 class="${me?.place === 1 ? 'champ' : ''}">${me?.place === 1 ? icon('trophy') : ''}${title}</h2><p>¡Gracias por jugar!</p><div class="ranking">${rows}</div>
       <div class="row-btns"><button class="btn primary big" id="go-exit">Volver al menú</button></div>`, false);
     box.querySelector('#go-exit').onclick = onExit;
   }

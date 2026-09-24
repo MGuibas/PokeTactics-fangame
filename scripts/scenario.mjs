@@ -14,7 +14,7 @@ const waitPhase = async (ph, timeout = 60000) => {
     const p = await g(() => window.__pt3d.game?.room?.phase);
     if (p === ph) return true;
     // Safari: elige si es mi turno.
-    await g(() => { const gm = window.__pt3d.game; const s = gm?.room?.safari; if (s && s.turn >= 0 && s.order[s.turn] === gm.myId) { const o = s.options.find((x) => !x.takenBy); if (o) gm.send({ t: 'safari', id: o.id }); } });
+    await g(() => { const gm = window.__pt3d.game; const s = gm?.room?.safari; if (s) { const o = s.options.find((x) => !x.takenBy); if (o) gm.send({ t: 'safari', id: o.id }); } });
     await page.waitForTimeout(200);
   }
   return false;

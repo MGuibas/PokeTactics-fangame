@@ -35,6 +35,7 @@ Puerto configurable con `PORT=8080 npm start`.
 | Listo (acelera la ronda) | **W** |
 | Dinamax | **Espacio** y clic en tu Pokémon |
 | Equipar objeto | Arrástralo del panel de objetos a un Pokémon |
+| Mover a tu entrenador | **Clic derecho** en el suelo (en móvil, toca el suelo) |
 | Espiar a un rival | Clic en su nombre (Esc para volver) |
 | Chat / emotes | **Enter** / botón 😄 |
 | Música on/off | Clic derecho en 🔊 |
@@ -52,7 +53,8 @@ Puerto configurable con `PORT=8080 npm start`.
 | 🔴 **Dinamax en directo** | La única acción **durante** el combate: carga el Dinamax y elige qué Pokémon se vuelve gigante (más PS, ataques en área, inmune a control). |
 | 🏅 **Medallas de gimnasio** | Aumentos temáticos al inicio de las etapas 2, 3 y 4 (Medalla Roca, Amuleto Iris, Ultra Ball, Mochila Grande…). |
 | 🏟️ **Gimnasios, Alto Mando e Incursiones** | Las rondas PvE son contra líderes (Brock, Misty, Lt. Surge…), el Alto Mando y, al final, una **Incursión Dinamax** contra un legendario gigante que puedes conseguir. |
-| 🦁 **Zona Safari** | El "carrusel" reimaginado como un draft por turnos: elige primero quien menos vida tenga. |
+| 🦁 **Zona Safari** | Carrusel compartido como en TFT: los entrenadores salen por tandas (menos vida primero) y corren a **agarrar** el Pokémon que quieran mientras gira. Haz clic en uno para perseguirlo. |
+| 🚶 **Entrenador controlable** | Tu compañero camina por la isla (clic derecho) y recoge las **Poké Balls de botín** que caen tras vencer a los salvajes, gimnasios e incursiones. Los rivales lo ven si te espían. |
 | 🌟 **Shinies** | 1/40 de probabilidad en la tienda: colores alternativos, brillos y +15 % de estadísticas. Las evoluciones heredan el shiny. |
 | 🦊 **Eevee** | Evoluciona en la Eeveelución de tu **tipo dominante** (Vaporeon, Jolteon, Flareon, Espeon, Umbreon, Leafeon, Glaceon o Sylveon). Cada evolución distinta cuenta por separado en las sinergias. |
 | 🐟 **Magikarp** | Cuesta 1 y solo usa Salpicadura… _¡pero no pasa nada!_ Hasta que evoluciona a un Gyarados de nivel legendario. |
@@ -66,7 +68,7 @@ Puerto configurable con `PORT=8080 npm start`.
 | ✅ **Botón "Listo"** | Si todos los humanos están listos, la ronda avanza sin esperar el temporizador. |
 | 🪄 **Auto-colocar** | Rellena tu tablero con los mejores Pokémon del banquillo en un clic. |
 | 📊 **Resumen de daño** | Tras cada combate ves qué Pokémon ha hecho más daño. |
-| 🗣️ **Emotes, chat y compañero** | Tu Pokémon compañero te acompaña junto al tablero y reacciona a victorias y emotes. |
+| 🗣️ **Emotes y chat** | Tu entrenador reacciona a victorias y emotes. |
 
 ---
 
@@ -101,16 +103,25 @@ public/
     models.js, specs.js   constructor procedural de Pokémon y sus especificaciones
     arena.js, fx.js       escenario, clima, partículas y efectos
     units.js, game.js     vistas de unidades, entrada, combate en vivo
+    trainer.js            entrenador controlable y Poké Balls de botín
+    icons.js              iconos SVG de la interfaz
     ui.js, audio.js       HUD y sonido/música sintetizados (WebAudio)
 scripts/
   sim-test.js             simula partidas completas de 8 bots (npm run sim)
   play-test.mjs, shot.mjs pruebas visuales con Playwright
+  carousel-test.mjs       carrusel, entrenador caminando y botín
+  mp-test.mjs             dos navegadores en la misma sala (y reconexión)
 ```
 
 - El servidor es **autoritativo**: los clientes solo envían intenciones (comprar, mover, Dinamax…) y reciben estado
   y eventos del combate, que se reproducen con interpolación y efectos.
 - El mismo `GameRoom` corre en el navegador para el modo solitario (`LocalTransport`), así que el juego funciona
   también como sitio estático.
+- Escenario: isla con acantilados facetados, playa, estadio de piedra con farolillos y estandartes que ondean,
+  Centro Pokémon, estanque, pinos, árboles frutales, arbustos con bayas, vallas y hierba instanciada. Casi todo
+  el decorado se fusiona en unas pocas mallas con colores por vértice.
+- Interfaz sin emojis: iconos SVG propios (`public/js/client/icons.js`) para tipos, roles, clima, objetos,
+  medallas y botones, y fuente Fredoka incluida en el proyecto (`@fontsource/fredoka`).
 - Estética **cel-shading**: `MeshToonMaterial` con rampa de 4 tonos, borde de luz (rim light) y contornos por
   extrusión de normales en espacio de pantalla (grosor constante en píxeles). Cada Pokémon se fusiona en pocas
   geometrías con colores por vértice para que dibujar 20+ criaturas sea barato.

@@ -225,5 +225,5 @@ setInterval(() => {
 }, 20000);
 
 server.listen(PORT, () => {
-  console.log(`\n  ⚡ Poké Tactics 3D en http://localhost:${PORT}\n`);
+  console.log(`\n  PokéTactics 3D en http://localhost:${PORT}\n`);
 });

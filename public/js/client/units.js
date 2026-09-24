@@ -4,6 +4,7 @@ import { createModel } from './models.js';
 import { ITEMS } from '../game/data/items.js';
 import { LINES, formScale } from '../game/data/pokemon.js';
 import { F } from '../game/combat.js';
+import { icon, itemIcon } from './icons.js';
 
 const shadowTex = (() => {
   const c = document.createElement('canvas');
@@ -60,6 +61,7 @@ export class UnitView {
     this.dynaTarget = 0;
     this.lastHp = this.hp;
     this.fxTimer = 0;
+    this.walkAmt = 0;
     this.buildBar(o.bench);
     this.updateBar();
   }
@@ -102,19 +104,16 @@ export class UnitView {
   updateBar(full = false) {
     if (full || this._starsKey !== this.star + ':' + this.shiny) {
       this._starsKey = this.star + ':' + this.shiny;
-      this.$stars.textContent = (this.shiny ? '✨' : '') + STAR_HTML[this.star];
+      this.$stars.innerHTML = (this.shiny ? icon('sparkle', 'shiny') : '') + STAR_HTML[this.star];
       this.$stars.className = 'stars s' + this.star;
     }
     const k = this.items.join(',');
     if (full || this._itemsKey !== k) {
       this._itemsKey = k;
-      this.$its.innerHTML = this.items.map((it) => {
-        const d = ITEMS[it];
-        if (!d) return '';
-        return `<span class="item small ${d.component ? '' : 'full'}" style="--ic:${d.color};--ic2:${d.color2 || d.color}">${d.icon}</span>`;
-      }).join('');
+      this.$its.innerHTML = this.items.map((it) => itemIcon(ITEMS[it], true)).join('');
     }
-    this.$fr.textContent = this.fr >= 5 ? '💖' : '';
+    const fr = this.fr >= 5;
+    if (this._fr !== fr) { this._fr = fr; this.$fr.innerHTML = fr ? icon('heart') : ''; }
     const total = Math.max(this.maxHp, this.hp + this.shield);
     const hpW = Math.max(0, this.hp / total) * 100;
     this.$hp.style.width = hpW + '%';
@@ -124,17 +123,20 @@ export class UnitView {
     const mp = this.maxMana > 0 ? Math.min(1, this.mana / this.maxMana) : 0;
     this.$mp.style.width = mp * 100 + '%';
     this.$mpWrap.classList.toggle('full', mp >= 1);
-    let st = '';
     const f = this.flags;
-    if (f & F.SLEEP) st += '💤';
-    if (f & F.PARA) st += '⚡';
-    if (f & F.FREEZE) st += '🧊';
-    if (f & F.FLINCH) st += '💫';
-    if (f & F.BURN) st += '🔥';
-    if (f & F.CONFUSE) st += '❓';
-    if (f & F.SLOW) st += '🐌';
-    if (f & F.DISGUISE) st += '🎭';
-    this.$st.textContent = st;
+    if (this._flagsShown !== f) {
+      this._flagsShown = f;
+      let st = '';
+      if (f & F.SLEEP) st += icon('s_sleep', 'st-sleep');
+      if (f & F.PARA) st += icon('electrico', 'st-para');
+      if (f & F.FREEZE) st += icon('hielo', 'st-freeze');
+      if (f & F.FLINCH) st += icon('star', 'st-flinch');
+      if (f & F.BURN) st += icon('fuego', 'st-burn');
+      if (f & F.CONFUSE) st += icon('s_confuse', 'st-conf');
+      if (f & F.SLOW) st += icon('s_slow', 'st-slow');
+      if (f & F.DISGUISE) st += icon('fantasma', 'st-dis');
+      this.$st.innerHTML = st;
+    }
   }
 
   setState(hp, maxHp, mana, maxMana, shield, flags) {
@@ -253,6 +255,11 @@ export class UnitView {
     body.position.y = floatY + (this.model.float ? 0 : Math.abs(Math.sin(ph)) * 0.025);
     body.scale.set(1 + Math.sin(ph * 2) * 0.012, 1 - Math.sin(ph * 2) * 0.012, 1);
     body.rotation.z = sleeping ? 0.25 : 0;
+    if (this.walkAmt > 0.01) {
+      const w = this.phase * 11;
+      body.position.y += Math.abs(Math.sin(w)) * 0.17 * this.walkAmt;
+      body.rotation.z += Math.sin(w) * 0.1 * this.walkAmt;
+    }
     body.rotation.x = 0;
     const rig = this.model.rig;
     if (rig.tail) rig.tail.rotation.y = Math.sin(ph * 1.3) * 0.35 * speed;

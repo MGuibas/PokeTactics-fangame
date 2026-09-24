@@ -11,6 +11,13 @@ import { sfx } from './audio.js';
 import { AVATARS } from '../game/room.js';
 import { FORMS, LINE_LIST } from '../game/data/pokemon.js';
 import { WEATHER_IDS } from '../game/data/world.js';
+import { icon } from './icons.js';
+
+// Sustituye los marcadores data-icon por iconos SVG.
+for (const el of document.querySelectorAll('[data-icon]')) {
+  const cls = el.className;
+  el.outerHTML = icon(el.dataset.icon, cls);
+}
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -169,7 +176,7 @@ function connectWs() {
 function renderRooms(list) {
   const el = $('room-list');
   if (!list.length) { el.innerHTML = '<p class="muted">No hay salas públicas. ¡Crea una!</p>'; return; }
-  el.innerHTML = list.map((r) => `<div class="room-item"><div><b>${esc(r.name)}</b> <span class="muted">· ${r.players}/8</span></div><button class="btn secondary" data-code="${r.code}">Unirse</button></div>`).join('');
+  el.innerHTML = list.map((r) => `<div class="room-item"><div><b>${esc(r.name)}</b> <span class="muted">· ${r.players}/8 jugadores</span></div><button class="btn secondary" data-code="${r.code}">Unirse</button></div>`).join('');
   el.querySelectorAll('button').forEach((b) => (b.onclick = () => ws.send({ t: 'join', code: b.dataset.code })));
 }
 
@@ -183,7 +190,7 @@ function renderLobby() {
   for (let i = 0; i < 8; i++) {
     const m = lobby.members[i];
     if (!m) { slots.push('<div class="member empty">Libre<br>(bot)</div>'); continue; }
-    slots.push(`<div class="member">${host && m.id !== myId ? `<button class="kick" data-id="${m.id}" title="Expulsar">✕</button>` : ''}<img src="${portrait(m.avatar)}"/><div class="nm">${m.bot ? '🤖 ' : ''}${esc(m.name)}</div><div class="tag">${m.host ? '👑 Anfitrión' : m.id === myId ? 'Tú' : m.bot ? 'Bot' : 'Entrenador'}</div></div>`);
+    slots.push(`<div class="member">${host && m.id !== myId ? `<button class="kick" data-id="${m.id}" title="Expulsar">×</button>` : ''}<img src="${portrait(m.avatar)}"/><div class="nm">${esc(m.name)}</div><div class="tag ${m.host ? 'host' : ''}">${m.host ? `${icon('crown')}Anfitrión` : m.id === myId ? 'Tú' : m.bot ? 'Bot' : 'Entrenador'}</div></div>`);
   }
   $('member-list').innerHTML = slots.join('');
   $('member-list').querySelectorAll('.kick').forEach((b) => (b.onclick = () => ws.send({ t: 'kick', id: b.dataset.id })));

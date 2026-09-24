@@ -41,7 +41,7 @@ console.log('B', JSON.stringify(await info(b)));
 for (let i = 0; i < 60; i++) {
   const ia = await info(a);
   if (ia?.phase === 'planning') break;
-  for (const p of [a, b]) await p.evaluate(() => { const gm = window.__pt3d.game; const s = gm?.room?.safari; if (s && s.turn >= 0 && s.order[s.turn] === gm.myId) { const o = s.options.find((x) => !x.takenBy); if (o) gm.send({ t: 'safari', id: o.id }); } });
+  for (const p of [a, b]) await p.evaluate(() => { const gm = window.__pt3d.game; const s = gm?.room?.safari; if (s) { const o = s.options.find((x) => !x.takenBy); if (o) gm.send({ t: 'safari', id: o.id }); } });
   await a.waitForTimeout(500);
 }
 for (const p of [a, b]) await p.evaluate(() => { const g = window.__pt3d.game; g.send({ t: 'buy', slot: 0 }); g.send({ t: 'autoplace' }); g.send({ t: 'ready', v: true }); g.send({ t: 'emote', e: '😂' }); g.send({ t: 'chat', text: 'hola!' }); });

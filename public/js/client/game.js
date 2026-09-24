@@ -10,6 +10,9 @@ import { FORMS, LINES } from '../game/data/pokemon.js';
 import { ITEMS } from '../game/data/items.js';
 import { WEATHERS, BADGES } from '../game/data/world.js';
 import { mirror, COLS } from '../game/hex.js';
+import { CAROUSEL, AV_HOME } from '../game/room.js';
+import { TrainerView, OrbView } from './trainer.js';
+import { itemIcon } from './icons.js';
 
 const $ = (id) => document.getElementById(id);
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -39,10 +42,15 @@ export class GameClient {
     this.hud = new Hud(this);
     this.hud.show(true);
     document.getElementById('hud').classList.toggle('solo', !!solo);
+    try { if (localStorage.getItem('pt3d-walked')) $('walk-hint')?.remove(); } catch {}
     this.unsub = net.on((m) => this.onMsg(m));
     this.bindInput();
     this.stopUpdate = engine.onUpdate((dt, t) => this.update(dt, t));
-    this.companion = null;
+    this.trainer = null; // entrenador del jugador mostrado (propio o espiado)
+    this.carTrainers = new Map(); // entrenadores en el carrusel
+    this.orbViews = new Map();
+    this.carRot = 0;
+    this.carDeco = null;
     sfx.setMood('calm');
     // Pre-renderiza retratos de formas base.
     warmPortraits(Object.values(LINES).map((l) => [l.forms[0], false]));
@@ -65,11 +73,14 @@ export class GameClient {
       case 'chat': this.hud.chat(m.name, m.text); sfx.play('click'); break;
       case 'gameover': this.onGameOver(m); break;
       case 'safariPick': this.onSafariPick(m); break;
-      case '_close': if (!this.solo) this.hud.toast('📴 Conexión perdida… reconectando'); break;
+      case 'avs': this.onAvatars(m.a); break;
+      case 'car': this.onCarousel(m); break;
+      case '_close': if (!this.solo) this.hud.toast('Conexión perdida. Reconectando…'); break;
     }
   }
 
   onState(room, me) {
+    this._stateAt = performance.now();
     const prev = this.room;
     this.room = room;
     if (me) this.me = me;
@@ -80,14 +91,13 @@ export class GameClient {
     if (room.phase === 'safari') this.renderSafari();
     else if (this.sviews.size) this.clearSafari();
     this.refreshBoard();
-    this.updateCompanion();
+    this.updateTrainer();
+    this.syncOrbs();
   }
 
   onMe(me) {
     const prev = this.me;
     this.me = me;
-    if (prev && me.gold > prev.gold + 0 && prev.gold !== undefined && this.room?.phase !== 'planning') { /* oro de combate */ }
-    if (prev && me.level > prev.level) { /* manejado por fx levelup */ }
     this.hud.renderMe(me);
     this.refreshBoard();
   }
@@ -105,22 +115,28 @@ export class GameClient {
     }
     if (to === 'safari') {
       this.exitCombat();
-      this.hud.banner('🦁 ¡Zona Safari!', '', 'El entrenador con menos vida elige primero');
+      this.hud.banner('¡Zona Safari!', '', 'Los entrenadores con menos vida salen primero');
+      this.engine.camTarget.set(0, 0, 1.2);
+      this.engine.camBase.set(0, 22, 16);
+    }
+    if (from === 'safari') {
+      this.engine.camTarget.set(0, 0, 3.3);
+      this.engine.camBase.set(0, 19, 13.5);
     }
   }
 
   onRound(m) {
     const w = WEATHERS[m.weather];
-    const t = m.rtype === 'pvp' ? '⚔️ Combate' : m.rtype === 'safari' ? '🦁 Zona Safari' : m.stage === 1 ? '🌿 Pokémon salvajes' : m.stage <= 3 ? '🏟️ Gimnasio' : m.stage === 4 ? '👑 Alto Mando' : '🔴 Incursión Dinamax';
+    const t = m.rtype === 'pvp' ? 'Combate' : m.rtype === 'safari' ? 'Zona Safari' : m.stage === 1 ? 'Pokémon salvajes' : m.stage <= 3 ? 'Gimnasio' : m.stage === 4 ? 'Alto Mando' : 'Incursión Dinamax';
     if (m.rtype !== 'safari') this.hud.banner(`Etapa ${m.stage}-${m.round}`, '', t);
     sfx.play('round');
     if (m.round === 1 && m.stage >= 2) {
-      setTimeout(() => this.hud.toast(`${w.icon} El clima cambia: ${w.name}. ${w.desc}`, true), 1200);
+      setTimeout(() => this.hud.toast(`El clima cambia: ${w.name}. ${w.desc}`, true), 1200);
       if (m.event) {
         import('../game/data/world.js').then(({ EVENTS }) => {
           const ev = EVENTS[m.event.id];
           const desc = ev.desc.replace('{type}', m.event.type ? m.event.type : '');
-          setTimeout(() => this.hud.toast(`📰 Noticias del Profesor: ${ev.icon} ${ev.name} — ${desc}`, true), 2600);
+          setTimeout(() => this.hud.toast(`Noticias del Profesor: ${ev.name}. ${desc}`, true), 2600);
         });
       }
     }
@@ -130,7 +146,7 @@ export class GameClient {
     switch (m.kind) {
       case 'evolve': {
         sfx.play('evolve');
-        this.hud.toast('✨ ' + m.text, true);
+        this.hud.toast(m.text, true);
         const v = this.views.get(m.uid);
         if (v) {
           v.evolveFx(() => {
@@ -143,22 +159,33 @@ export class GameClient {
         }
         break;
       }
-      case 'levelup': sfx.play('level'); this.hud.toast(`⬆️ ¡Nivel ${m.level}! Ya caben ${m.level} Pokémon en el tablero.`); break;
+      case 'levelup': sfx.play('level'); this.hud.toast(`¡Nivel ${m.level}! Ya caben ${m.level} Pokémon en el tablero.`); break;
       case 'toast': this.hud.toast(m.text, m.big); if (m.text.includes('lleno') || m.text.includes('Máximo')) sfx.play('error'); break;
       case 'item': sfx.play('place'); break;
-      case 'badge': sfx.play('badge'); this.hud.toast(`🏅 Medalla obtenida: ${BADGES[m.id].name}`, true); break;
+      case 'badge': sfx.play('badge'); this.hud.toast(`Medalla obtenida: ${BADGES[m.id].name}`, true); break;
       case 'capture': this.onCaptureResult(m); break;
-      case 'eliminated': this.hud.banner(`💀 Eliminado`, 'lose', `Has quedado ${m.place}º`); sfx.play('lose'); break;
+      case 'eliminated': this.hud.banner('Eliminado', 'lose', `Has quedado ${m.place}º`); sfx.play('lose'); break;
+      case 'orb': {
+        sfx.play('coin');
+        const pos = V3(m.x, 1.2, m.z);
+        const names = m.items.map((it) => ITEMS[it]?.name).filter(Boolean);
+        if (m.gold) names.push(`+${m.gold} oro`);
+        names.forEach((n, i) => setTimeout(() => this.fx.text(pos.clone().add(V3(0, i * 0.5, 0)), n, 'txt', 1.6), i * 180));
+        if (m.gold) this.fx.coins(pos, 10);
+        break;
+      }
     }
   }
 
   onEmote(m) {
     this.hud.emote(m.from, m.e);
     const viewed = this.scoutId || this.myId;
-    if (m.from === viewed && this.companion) {
-      this.fx.text(this.companion.topPos().add(V3(0, 0.6, 0)), m.e, 'txt big', 2);
-      this.companion.jump();
+    if (m.from === viewed && this.trainer) {
+      this.fx.text(this.trainer.view.topPos().add(V3(0, 0.6, 0)), m.e, 'txt big', 2);
+      this.trainer.view.jump();
     }
+    const ct = this.carTrainers.get(m.from);
+    if (ct) { this.fx.text(ct.view.topPos().add(V3(0, 0.6, 0)), m.e, 'txt big', 2); ct.view.jump(); }
   }
 
   onGameOver(m) {
@@ -192,9 +219,10 @@ export class GameClient {
     const board = sp ? sp.board : this.me.board;
     const bench = sp ? sp.bench : this.me.bench;
     const showBoard = this.mode !== 'combat' && this.room.phase !== 'safari';
+    const showBench = this.room.phase !== 'safari';
     const wanted = new Map();
     if (showBoard) for (const u of board) wanted.set(u.uid, { u, pos: hexToWorld(u.x, 4 + u.y), bench: false });
-    bench.forEach((u, i) => { if (u) wanted.set(u.uid, { u, pos: benchToWorld(i), bench: true }); });
+    if (showBench) bench.forEach((u, i) => { if (u) wanted.set(u.uid, { u, pos: benchToWorld(i), bench: true }); });
     for (const [uid, v] of this.views) {
       if (!wanted.has(uid) && !v.evolving) { v.dispose(); this.views.delete(uid); }
     }
@@ -260,7 +288,7 @@ export class GameClient {
       if (m.kind === 'pvp') {
         const opp = m.sides[1 - f.mySide];
         this.hud.banner('¡Combate!', '', `vs. ${esc(opp.name)}`);
-      } else this.hud.banner(m.kind === 'raid' ? '🔴 ¡Incursión!' : m.kind === 'gym' ? '🏟️ ¡Desafío!' : '🌿 ¡Salvajes!', '', esc(m.title));
+      } else this.hud.banner(m.kind === 'raid' ? '¡Incursión Dinamax!' : m.kind === 'gym' ? '¡Desafío!' : '¡Pokémon salvajes!', '', esc(m.title));
       sfx.play('fight');
     }
     this.hud.renderMe(this.me);
@@ -393,7 +421,7 @@ export class GameClient {
       }
       case 'coin': {
         const t = V(e.u);
-        if (t) { this.fx.coins(t.midPos(), 10); this.fx.text(t.topPos(), '+1 💰', 'coin', 1.2); sfx.play('coin'); }
+        if (t) { this.fx.coins(t.midPos(), 10); this.fx.text(t.topPos(), '+1 oro', 'coin', 1.2); sfx.play('coin'); }
         break;
       }
       case 'dyna': {
@@ -436,15 +464,14 @@ export class GameClient {
     if (m.loot && target === this.myId) {
       const l = m.loot;
       const parts = [];
-      if (l.items) parts.push(`${l.items} objeto${l.items > 1 ? 's' : ''}`);
-      if (l.gold) parts.push(`+${l.gold} 💰`);
-      if (l.caramelo) parts.push('🍬');
       if (l.legend) parts.push(`¡${FORMS[l.legend].name}!`);
-      if (parts.length) sub = (sub ? sub + ' · ' : '') + 'Botín: ' + parts.join(', ');
-      if (l.capture) setTimeout(() => this.hud.toast(`🎯 ¡Un ${FORMS[l.capture.form].name}${l.capture.shiny ? ' ✨ SHINY' : ''} salvaje se ha quedado! Intenta capturarlo.`, true), 1500);
+      if (l.orbs) parts.push(`${l.orbs} Poké Ball${l.orbs > 1 ? 's' : ''} de botín`);
+      if (parts.length) sub = (sub ? sub + ' · ' : '') + parts.join(', ');
+      if (l.orbs) setTimeout(() => this.hud.toast('Recoge las Poké Balls con tu entrenador (clic derecho o toca el suelo para caminar).', true), 900);
+      if (l.capture) setTimeout(() => this.hud.toast(`¡Un ${FORMS[l.capture.form].name}${l.capture.shiny ? ' shiny' : ''} salvaje se ha quedado! Intenta capturarlo.`, true), 2600);
     }
     const g = m.gold?.[mySide];
-    if (g) sub = (sub ? sub + ' · ' : '') + `Día de Pago +${g} 💰`;
+    if (g) sub = (sub ? sub + ' · ' : '') + `Día de Pago: +${g} oro`;
     this.hud.banner(txt, cls, sub);
     if (target === this.myId) sfx.play(cls === 'win' ? 'win' : cls === 'lose' ? 'lose' : 'round');
     for (const v of this.cviews.values()) {
@@ -453,7 +480,7 @@ export class GameClient {
       if (won) setTimeout(() => v.celebrate(), Math.random() * 300);
     }
     this.showRecap(m.stats, mySide);
-    if (this.companion) { if (cls === 'win') this.companion.celebrate(); else if (cls === 'lose') this.companion.hitFlash(); }
+    if (this.trainer) { if (cls === 'win') this.trainer.view.celebrate(); else if (cls === 'lose') this.trainer.view.hitFlash(); }
   }
 
   showRecap(stats, mySide) {
@@ -463,7 +490,7 @@ export class GameClient {
     const max = Math.max(1, ...mine.map((s) => s.dmg));
     const d = document.createElement('div');
     d.id = 'recap';
-    d.innerHTML = `<h4>📊 Daño infligido</h4>` + mine.map((s) => `<div class="r"><img src="${portrait(s.form, s.shiny)}"/><div class="bar"><i style="width:${(s.dmg / max) * 100}%"></i></div><span>${s.dmg}</span></div>`).join('');
+    d.innerHTML = `<h4>Daño infligido</h4>` + mine.map((s) => `<div class="r"><img src="${portrait(s.form, s.shiny)}"/><div class="bar"><i style="width:${(s.dmg / max) * 100}%"></i></div><span>${s.dmg}</span></div>`).join('');
     document.body.appendChild(d);
     clearTimeout(this._recapT);
     this._recapT = setTimeout(() => d.remove(), 6000);
@@ -484,7 +511,7 @@ export class GameClient {
     if (!this.me || this.me.dyna < this.me.dynaNeed || !this.fight || this.scoutId) return;
     if (this.dynaArmed) { this.send({ t: 'dynamax', uid: null }); this.dynaArmed = false; return; }
     this.dynaArmed = true;
-    this.hud.toast('🔴 Toca a uno de tus Pokémon para Dinamaxizarlo');
+    this.hud.toast('Toca a uno de tus Pokémon para Dinamaxizarlo');
     clearTimeout(this._dynaT);
     this._dynaT = setTimeout(() => { if (this.dynaArmed) { this.send({ t: 'dynamax', uid: null }); this.dynaArmed = false; } }, 5000);
     this.hud.renderMe(this.me);
@@ -494,7 +521,7 @@ export class GameClient {
   openCapture() {
     const c = this.me?.capture;
     if (!c) return;
-    const box = this.hud.modal(`<h2>🎯 ¡${esc(FORMS[c.form].name)}${c.shiny ? ' ✨' : ''} salvaje!</h2>
+    const box = this.hud.modal(`<h2>¡${esc(FORMS[c.form].name)}${c.shiny ? ' shiny' : ''} salvaje!</h2>
       <p>Pulsa cuando el anillo verde sea lo más pequeño posible.</p>
       <div class="capture" id="cap-area"><img src="${portrait(c.form, c.shiny, { full: true })}"/><div class="ring inner"></div><div class="ring" id="cap-ring"></div></div>
       <div class="capture-msg" id="cap-msg"></div>
@@ -535,7 +562,7 @@ export class GameClient {
   onCaptureResult(m) {
     const ball = this._capBall, area = this._capArea;
     const msg = document.getElementById('cap-msg');
-    if (!ball || !msg) { this.hud.toast(m.ok ? `🎉 ¡Has capturado a ${FORMS[m.form].name}!` : `💨 ${FORMS[m.form].name} escapó…`, true); return; }
+    if (!ball || !msg) { this.hud.toast(m.ok ? `¡Has capturado a ${FORMS[m.form].name}!` : `${FORMS[m.form].name} escapó…`, true); return; }
     let i = 0;
     const shake = () => {
       if (i < m.shakes) {
@@ -548,11 +575,11 @@ export class GameClient {
         setTimeout(shake, 800);
       } else if (m.ok) {
         ball.classList.add('ok');
-        msg.textContent = `🎉 ¡${FORMS[m.form].name} atrapado!`;
+        msg.textContent = `¡${FORMS[m.form].name} atrapado!`;
         sfx.play('caught');
         setTimeout(() => this.hud.closeModal(), 1600);
       } else {
-        msg.textContent = `💨 ¡Oh, no! ¡${FORMS[m.form].name} escapó!`;
+        msg.textContent = `¡Oh, no! ¡${FORMS[m.form].name} escapó!`;
         sfx.play('escape');
         ball.style.display = 'none';
         const img = area.querySelector('img');
@@ -563,64 +590,190 @@ export class GameClient {
     setTimeout(shake, 300);
   }
 
-  // ───────────────────────── Zona Safari ─────────────────────────
+  // ───────────────────────── Zona Safari (carrusel) ─────────────────────────
+  carouselOptPos(o) {
+    const a = o.a + this.carRot;
+    return V3(CAROUSEL.cx + Math.cos(a) * CAROUSEL.r, 0, CAROUSEL.cz + Math.sin(a) * CAROUSEL.r);
+  }
+
   renderSafari() {
     const s = this.room.safari;
     if (!s) return;
-    // Opciones en círculo.
-    const n = s.options.length;
-    s.options.forEach((o, i) => {
+    if (this.carRot === 0 || Math.abs(this.carRot - s.rot) > 0.3) this.carRot = s.rot;
+    this.buildCarouselDeco();
+    if (this.trainer) { this.trainer.dispose(); this.trainer = null; }
+    for (const [id, v] of this.orbViews) { v.dispose(false); this.orbViews.delete(id); }
+    // Pokémon del carrusel.
+    for (const o of s.options) {
       let v = this.sviews.get(o.id);
-      if (o.takenBy) {
-        if (v && !v.leaving) {
-          v.leaving = true;
-          this.fx.burst(v.midPos(), 0xffffff, 16, 4, 0.4, 0.5);
-          sfx.play('buy');
-          setTimeout(() => { v.dispose(); this.sviews.delete(o.id); }, 50);
-        }
-        return;
-      }
       if (!v) {
         v = new UnitView(this.ctx, { id: o.id, form: o.form, line: o.line, star: 1, shiny: o.shiny, items: [o.item], bench: true });
         v.safari = o;
-        v.angle = (i / n) * Math.PI * 2;
+        v.place(this.carouselOptPos(o));
         this.sviews.set(o.id, v);
       }
-    });
+      v.safari = o;
+      if (o.takenBy && !v.heldBy) {
+        v.heldBy = o.takenBy;
+        const tr = this.carTrainers.get(o.takenBy);
+        if (tr) tr.held = v;
+      }
+    }
+    // Entrenadores de todos los jugadores.
+    for (const pid of s.order) {
+      if (this.carTrainers.has(pid)) continue;
+      const p = this.room.players.find((x) => x.id === pid);
+      if (!p) continue;
+      const i = s.order.indexOf(pid);
+      const ang = Math.PI / 2 + (i / s.order.length) * Math.PI * 2;
+      const x = CAROUSEL.cx + Math.cos(ang) * CAROUSEL.pen, z = CAROUSEL.cz + Math.sin(ang) * CAROUSEL.pen;
+      const tr = new TrainerView(this.ctx, { pid, form: p.avatar, name: p.name, me: pid === this.myId, x, z });
+      tr.view.faceTo(V3(CAROUSEL.cx, 0, CAROUSEL.cz));
+      this.carTrainers.set(pid, tr);
+    }
+    this.renderSafariUi();
+  }
+
+  renderSafariUi() {
+    const s = this.room?.safari;
+    if (!s) return;
     let ui = document.getElementById('safari-ui');
-    if (!ui) { ui = document.createElement('div'); ui.id = 'safari-ui'; document.body.appendChild(ui); }
-    const cur = s.order[s.turn];
-    const curP = this.room.players.find((p) => p.id === cur);
-    const mine = cur === this.myId;
-    ui.innerHTML = `<h3>${s.turn < 0 ? '🦁 Zona Safari' : mine ? '👉 ¡Tu turno! Elige un Pokémon' : curP ? `Elige: ${esc(curP.name)}` : 'Zona Safari'}</h3>
-      <div class="order">${s.order.map((pid, i) => { const p = this.room.players.find((x) => x.id === pid); return `<span class="${i === s.turn ? 'cur' : i < s.turn ? 'done' : ''}" title="${esc(p?.name || '')}"><img src="${portrait(p?.avatar || 'pikachu')}"/></span>`; }).join('')}</div>`;
-    if (mine && this._lastSafariTurn !== s.turn) { sfx.play('round'); this._lastSafariTurn = s.turn; }
+    if (!ui) { ui = document.createElement('div'); ui.id = 'safari-ui'; document.body.appendChild(ui); this._safariAt = performance.now(); }
+    const relMs = (s.rel?.[this.myId] ?? 0) - (performance.now() - (this._stateAt || performance.now()));
+    const mine = s.options.find((o) => o.takenBy === this.myId);
+    let title;
+    if (mine) title = `¡Tienes a ${FORMS[mine.form].name}!`;
+    else if (relMs > 150) title = `Sales en ${Math.ceil(relMs / 1000)} s`;
+    else title = '¡Corre! Toca un Pokémon para agarrarlo';
+    const waves = {};
+    for (const pid of s.order) (waves[s.wave?.[pid] ?? 0] ||= []).push(pid);
+    const key = title + JSON.stringify(s.options.map((o) => o.takenBy));
+    if (ui._key === key) return;
+    ui._key = key;
+    ui.innerHTML = `<h3>${title}</h3><div class="order">${Object.values(waves).map((g) => `<div class="wave">${g.map((pid) => {
+      const p = this.room.players.find((x) => x.id === pid);
+      const got = s.options.find((o) => o.takenBy === pid);
+      return `<span class="${pid === this.myId ? 'me' : ''} ${got ? 'done' : ''}" title="${esc(p?.name || '')}"><img src="${portrait(p?.avatar || 'pikachu')}"/></span>`;
+    }).join('')}</div>`).join('')}</div>`;
+  }
+
+  buildCarouselDeco() {
+    if (this.carDeco) return;
+    const g = new THREE.Group();
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xffe07a, transparent: true, opacity: 0.55, depthWrite: false });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(CAROUSEL.r - 0.35, CAROUSEL.r + 0.35, 64), ringMat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(CAROUSEL.cx, 0.16, CAROUSEL.cz);
+    g.add(ring);
+    const pen = new THREE.Mesh(new THREE.RingGeometry(CAROUSEL.pen - 0.9, CAROUSEL.pen + 0.9, 64), new THREE.MeshBasicMaterial({ color: 0x3d7dca, transparent: true, opacity: 0.18, depthWrite: false }));
+    pen.rotation.x = -Math.PI / 2;
+    pen.position.set(CAROUSEL.cx, 0.05, CAROUSEL.cz);
+    g.add(pen);
+    this.engine.scene.add(g);
+    this.carDeco = g;
+  }
+
+  onCarousel(m) {
+    if (this.room?.phase !== 'safari') return;
+    this.carRot = m.rot;
+    for (const [pid, x, z, hold, tx, tz] of m.a) {
+      const tr = this.carTrainers.get(pid);
+      if (!tr) continue;
+      const mine = pid === this.myId;
+      tr.setServer(x, z, tx, tz, mine && this.carWalking);
+      if (!mine || !this.carWalking) tr.walkTo(tx, tz);
+      if (hold && !tr.held) {
+        const v = this.sviews.get(hold);
+        if (v) { tr.held = v; v.heldBy = pid; }
+      }
+    }
+    this.renderSafariUi();
   }
 
   onSafariPick(m) {
     const p = this.room?.players.find((x) => x.id === m.pid);
     const v = this.sviews.get(m.opt);
-    if (v && p) this.fx.text(v.topPos().add(V3(0, 0.5, 0)), `→ ${p.name}`, 'txt', 1.4);
+    const tr = this.carTrainers.get(m.pid);
+    if (v && tr) { tr.held = v; v.heldBy = m.pid; }
+    if (v && p) {
+      this.fx.burst(v.midPos(), 0xffffff, 14, 3, 0.35, 0.4);
+      this.fx.text(v.topPos().add(V3(0, 0.5, 0)), p.name, 'txt', 1.4);
+      if (m.pid === this.myId) { sfx.play('buy'); this.carWalking = false; }
+    }
   }
 
   clearSafari() {
     for (const v of this.sviews.values()) v.dispose();
     this.sviews.clear();
+    for (const t of this.carTrainers.values()) t.dispose();
+    this.carTrainers.clear();
+    if (this.carDeco) { this.engine.scene.remove(this.carDeco); this.carDeco = null; }
     document.getElementById('safari-ui')?.remove();
+    this.carWalking = false;
+    this.updateTrainer();
   }
 
-  // ───────────────────────── Compañero ─────────────────────────
-  updateCompanion() {
-    const p = this.scoutId ? this.viewedPlayer() : this.room?.players.find((x) => x.id === this.myId);
+  // ───────────────────────── Entrenador y botín ─────────────────────────
+  updateTrainer() {
+    if (!this.room || this.room.phase === 'safari') return;
+    const p = this.scoutId ? this.viewedPlayer() : this.room.players.find((x) => x.id === this.myId);
     if (!p) return;
-    const form = p.avatar;
-    if (!this.companion || this.companion.form !== form) {
-      this.companion?.dispose();
-      this.companion = new UnitView(this.ctx, { id: 'comp', form, line: FORMS[form]?.line || 'pichu', star: 1, bench: true, scaleMul: 1.25 });
-      this.companion.hideBar = true;
-      this.companion.place(V3(-9.3, 0, 4.4));
-      this.companion.yaw = this.companion.targetYaw = 2.4;
+    if (!this.trainer || this.trainer.form !== p.avatar || this.trainer.pid !== p.id) {
+      this.trainer?.dispose();
+      const [x, z] = p.av || [AV_HOME.x, AV_HOME.z];
+      this.trainer = new TrainerView(this.ctx, { pid: p.id, form: p.avatar, name: p.name, me: p.id === this.myId, x, z });
+      this.trainer.showLabel = false;
+      this.trainer.view.yaw = this.trainer.view.targetYaw = 2.2;
+      if (p.av) this.trainer.walkTo(p.av[2], p.av[3]);
     }
+  }
+
+  onAvatars(list) {
+    if (!this.trainer || this.room?.phase === 'safari') return;
+    for (const [pid, x, z, tx, tz] of list) {
+      if (pid !== this.trainer.pid) continue;
+      const mine = pid === this.myId;
+      this.trainer.setServer(x, z, tx, tz, mine && this.walkingLocal);
+      if (!mine || !this.walkingLocal) this.trainer.walkTo(tx, tz);
+      if (mine && Math.hypot(tx - this.trainer.target.x, tz - this.trainer.target.z) < 0.05) this.walkingLocal = false;
+    }
+  }
+
+  syncOrbs() {
+    if (!this.room || this.room.phase === 'safari') return;
+    const p = this.scoutId ? this.viewedPlayer() : this.room.players.find((x) => x.id === this.myId);
+    const list = p?.orbs || [];
+    const ids = new Set(list.map((o) => o.id));
+    for (const [id, v] of this.orbViews) if (!ids.has(id)) { v.dispose(true); this.orbViews.delete(id); }
+    for (const o of list) if (!this.orbViews.has(o.id)) this.orbViews.set(o.id, new OrbView(this.ctx, o));
+  }
+
+  // Ordena caminar al entrenador (clic derecho o toque en el suelo).
+  walkTo(e) {
+    if (!this.me?.alive || this.scoutId) return false;
+    const p = this.engine.pickPlane(this.ndc(e).x, this.ndc(e).y, 0);
+    if (!p) return false;
+    if (this.room?.phase === 'safari') {
+      const tr = this.carTrainers.get(this.myId);
+      const s = this.room.safari;
+      if (!tr || s.options.some((o) => o.takenBy === this.myId)) return false;
+      this.send({ t: 'walk', x: p.x, z: p.z });
+      const dx = p.x - CAROUSEL.cx, dz = p.z - CAROUSEL.cz, d = Math.hypot(dx, dz), R = CAROUSEL.pen + 0.6;
+      if (d > R) { p.x = CAROUSEL.cx + (dx / d) * R; p.z = CAROUSEL.cz + (dz / d) * R; }
+      tr.walkTo(p.x, p.z);
+      this.carWalking = true;
+    } else {
+      if (!this.trainer) return false;
+      const d = Math.hypot(p.x, p.z);
+      if (d > 13.2) { p.x *= 13.2 / d; p.z *= 13.2 / d; }
+      this.send({ t: 'walk', x: p.x, z: p.z });
+      this.trainer.walkTo(p.x, p.z);
+      this.walkingLocal = true;
+    }
+    this.fx.ring(V3(p.x, 0, p.z), 0.9, 0x9be86a, 0.4, 0.2);
+    $('walk-hint')?.remove();
+    try { localStorage.setItem('pt3d-walked', '1'); } catch {}
+    return true;
   }
 
   // ───────────────────────── Entrada ─────────────────────────
@@ -669,11 +822,18 @@ export class GameClient {
 
   pointerDown(e) {
     sfx.unlock();
-    if (e.button === 2) return;
-    // Safari: elegir opción.
+    if (e.button === 2) { this.walkTo(e); return; }
+    // Safari: perseguir un Pokémon o caminar.
     if (this.room?.phase === 'safari') {
-      const v = this.pick(e, [...this.sviews.values()]);
-      if (v && this.room.safari.order[this.room.safari.turn] === this.myId) this.send({ t: 'safari', id: v.safari.id });
+      const v = this.pick(e, [...this.sviews.values()].filter((x) => !x.heldBy));
+      const tr = this.carTrainers.get(this.myId);
+      if (v && tr) {
+        this.send({ t: 'safari', id: v.safari.id });
+        tr.walkTo(v.pos.x, v.pos.z);
+        this.carChase = v;
+        this.carWalking = true;
+        this.fx.ring(v.pos, 1.1, 0xffe07a, 0.4, 0.2);
+      } else { this.carChase = null; this.walkTo(e); }
       return;
     }
     // Dinamax: elegir unidad propia en combate.
@@ -690,7 +850,11 @@ export class GameClient {
     if (v && this.canDrag(v)) {
       this.drag = { v, start: { x: e.clientX, y: e.clientY }, moved: false, from: v.pos.clone() };
       this.hud.hideTip();
+      return;
     }
+    // Clic en el suelo vacío: el entrenador camina hasta allí.
+    if (!v && e.pointerType !== 'mouse') this.walkTo(e);
+    else if (!v) this.pendingWalk = { x: e.clientX, y: e.clientY, e };
   }
 
   pointerMove(e) {
@@ -707,7 +871,7 @@ export class GameClient {
         if (unit) {
           const cost = LINES[unit.line].cost;
           const copies = Math.pow(3, unit.star - 1);
-          $('sell-val').textContent = `+${Math.max(1, cost * copies - (unit.star > 1 && cost > 1 ? 1 : 0))}💰`;
+          $('sell-val').textContent = `+${Math.max(1, cost * copies - (unit.star > 1 && cost > 1 ? 1 : 0))} de oro`;
         }
         if (this.room?.phase !== 'combat') this.arena.tintMySide(true);
       }
@@ -723,14 +887,14 @@ export class GameClient {
     const pool = this.mode === 'combat' ? [...this.cviews.values(), ...this.planningViews().filter((v) => v.onBench)] : this.room?.phase === 'safari' ? [...this.sviews.values()] : this.planningViews();
     const v = this.pick(e, pool);
     this.hover = v;
-    if (v && v !== this.companion) {
+    if (v) {
       const data = v.safari ? { form: v.form, star: 1, shiny: v.shiny, items: v.items } : v.unit ? { ...v.unit } : { form: v.form, star: v.star, shiny: v.shiny, items: v.items, hp: v.hp, maxHp: v.maxHp, mana: v.mana, fr: v.fr };
       if (!data.line) data.line = FORMS[data.form].line;
       this.hud.showFormTip(data, e.clientX, e.clientY);
       this.engine.canvas.style.cursor = this.canDrag(v) || v.safari ? 'grab' : 'help';
     } else {
       this.hud.hideTip();
-      this.engine.canvas.style.cursor = this.dynaArmed ? 'crosshair' : '';
+      this.engine.canvas.style.cursor = this.dynaArmed ? 'crosshair' : 'pointer';
     }
   }
 
@@ -765,6 +929,11 @@ export class GameClient {
 
   pointerUp(e) {
     if (this.itemDrag) { this.endItemDrag(e); return; }
+    if (this.pendingWalk) {
+      const pw = this.pendingWalk;
+      this.pendingWalk = null;
+      if (Math.hypot(e.clientX - pw.x, e.clientY - pw.y) < 8 && e.target === this.engine.canvas) this.walkTo(e);
+    }
     const d = this.drag;
     this.drag = null;
     if (!d) return;
@@ -801,9 +970,8 @@ export class GameClient {
     if (!id) return;
     const d = ITEMS[id];
     const ghost = document.createElement('div');
-    ghost.className = `item ${d.component || d.consumable ? '' : 'full'}`;
-    ghost.style.cssText = `position:fixed;z-index:60;pointer-events:none;--ic:${d.color};--ic2:${d.color2 || d.color};transform:translate(-50%,-50%) scale(1.3)`;
-    ghost.textContent = d.icon;
+    ghost.className = 'drag-ghost';
+    ghost.innerHTML = itemIcon(d);
     document.body.appendChild(ghost);
     this.itemDrag = { idx, ghost };
     this.hud.hideTip();
@@ -854,7 +1022,7 @@ export class GameClient {
     const b = $('scout-banner');
     if (id) {
       const p = this.room.players.find((x) => x.id === id);
-      b.textContent = `👀 Viendo a ${p?.name} — clic para volver`;
+      b.textContent = `Viendo a ${p?.name} · clic para volver`;
       b.classList.remove('hidden');
     } else b.classList.add('hidden');
     // Al cambiar de vista durante un combate, el servidor enviará el combate correspondiente.
@@ -863,7 +1031,12 @@ export class GameClient {
     for (const v of this.views.values()) v.dispose();
     this.views.clear();
     this.refreshBoard();
-    this.updateCompanion();
+    this.trainer?.dispose();
+    this.trainer = null;
+    this.updateTrainer();
+    for (const v of this.orbViews.values()) v.dispose(false);
+    this.orbViews.clear();
+    this.syncOrbs();
     this.hud._plKey = null;
     this.hud.render(this.room, this.me);
   }
@@ -875,17 +1048,24 @@ export class GameClient {
     for (const [id, v] of this.cviews) {
       v.update(dt, t);
     }
-    // Safari: carrusel giratorio.
+    // Carrusel: los Pokémon libres giran; los agarrados siguen a su entrenador.
     if (this.sviews.size) {
-      const rot = t * 0.25;
+      this.carRot += CAROUSEL.rot * dt;
       for (const v of this.sviews.values()) {
-        const a = v.angle + rot;
-        v.pos.set(Math.cos(a) * 3.6, 0, Math.sin(a) * 3.2 + 1.0);
-        v.faceYaw(Math.atan2(-v.pos.x, -v.pos.z) + Math.PI);
+        if (!v.heldBy) {
+          v.pos.copy(this.carouselOptPos(v.safari));
+          v.faceYaw(this.carRot + v.safari.a + Math.PI / 2 + Math.PI);
+        }
         v.update(dt, t);
       }
+      // Persecución local del Pokémon elegido.
+      const tr = this.carTrainers.get(this.myId);
+      if (tr && this.carChase && !this.carChase.heldBy) tr.walkTo(this.carChase.pos.x, this.carChase.pos.z);
+      for (const tr2 of this.carTrainers.values()) tr2.update(dt, t);
+      if (!this._uiT || t - this._uiT > 0.25) { this._uiT = t; this.renderSafariUi(); }
     }
-    if (this.companion) this.companion.update(dt, t);
+    if (this.trainer) this.trainer.update(dt, t);
+    for (const o of this.orbViews.values()) o.update(dt, t);
   }
 
   dispose() {
@@ -901,7 +1081,8 @@ export class GameClient {
     for (const v of this.cviews.values()) v.dispose();
     this.views.clear(); this.cviews.clear();
     this.clearSafari();
-    this.companion?.dispose();
+    this.trainer?.dispose();
+    for (const o of this.orbViews.values()) o.dispose(false);
     this.hud.show(false);
     document.getElementById('recap')?.remove();
     this.net.close && this.net.close();

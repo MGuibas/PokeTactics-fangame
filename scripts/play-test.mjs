@@ -22,10 +22,10 @@ while (Date.now() - t0 < 240000) {
   const s = await state();
   if (!s) { await page.waitForTimeout(300); continue; }
   const key = `${s.stage}-${s.round}-${s.phase}`;
-  if (s.phase === 'safari' && s.safari && s.safari.turn >= 0 && s.safari.order[s.safari.turn] === s.myId) {
+  if (s.phase === 'safari' && s.safari) {
     if (key !== lastKey) await shot('safari');
     const opt = s.safari.options.find((o) => !o.takenBy);
-    await page.evaluate((id) => window.__pt3d.game.send({ t: 'safari', id }), opt.id);
+    if (opt) await page.evaluate((id) => window.__pt3d.game.send({ t: 'safari', id }), opt.id);
   }
   if (s.phase === 'planning' && key !== lastKey) {
     await page.waitForTimeout(600);
