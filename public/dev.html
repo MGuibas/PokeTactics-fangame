@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>Visor de modelos</title>
+<style>html,body{margin:0;height:100%;background:#9fd3f5;overflow:hidden;font-family:sans-serif}canvas{width:100%;height:100%;display:block}
+.lbl{position:absolute;font:600 12px sans-serif;color:#123;transform:translate(-50%,0);text-shadow:0 1px 0 #fff;white-space:nowrap}</style>
+<script type="importmap">{"imports":{"three":"./vendor/three/three.module.js"}}</script>
+</head><body><canvas id="c"></canvas>
+<script type="module">
+import * as THREE from 'three';
+import { Engine } from './js/client/engine.js';
+import { createModel } from './js/client/models.js';
+import { SPECS } from './js/client/specs.js';
+const eng = new Engine(document.getElementById('c'));
+const q = new URLSearchParams(location.search);
+const ids = (q.get('ids') ? q.get('ids').split(',') : Object.keys(SPECS));
+const shiny = q.has('shiny');
+const cols = +(q.get('cols') || Math.ceil(Math.sqrt(ids.length * 1.8)));
+const gap = +(q.get('gap') || 2.4);
+const rows = Math.ceil(ids.length / cols);
+eng.scene.background = new THREE.Color(0x9fd3f5);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshLambertMaterial({ color: 0x8fcf7a }));
+ground.rotation.x = -Math.PI / 2; eng.scene.add(ground);
+const models = [];
+ids.forEach((id, i) => {
+  const m = createModel(id, shiny);
+  const x = (i % cols - (cols - 1) / 2) * gap, z = (Math.floor(i / cols) - (rows - 1) / 2) * gap * 1.1;
+  m.root.position.set(x, m.float ? 0.15 : 0, z);
+  m.root.rotation.y = +(q.get('rot') || 0.35);
+  eng.scene.add(m.root);
+  const el = document.createElement('div'); el.className = 'lbl'; el.textContent = id; document.body.appendChild(el);
+  models.push({ m, el, p: new THREE.Vector3(x, 0, z + 0.9) });
+});
+const span = Math.max(cols * gap, rows * gap * 1.3);
+eng.camTarget.set(0, 0.6, 0.3);
+eng.camBase.set(0, span * 0.55, span * 0.8);
+eng.aspectZoom = 1; eng.resize = ((r) => function () { r.call(this); this.aspectZoom = 1; })(eng.resize);
+eng.onUpdate((dt, t) => {
+  for (const { m, el, p } of models) {
+    const s = eng.toScreen(p); el.style.left = s.x + 'px'; el.style.top = s.y + 'px';
+  }
+});
+window.__ready = true;
+</script></body></html>

@@ -1,0 +1,21 @@
+{
+  "name": "poke-tactics-3d",
+  "version": "1.0.0",
+  "description": "Auto-battler multijugador estilo TFT con Pokémon en 3D cel-shading (fan game)",
+  "type": "module",
+  "main": "server/server.js",
+  "scripts": {
+    "postinstall": "node scripts/copy-vendor.js",
+    "start": "node server/server.js",
+    "dev": "node --watch server/server.js",
+    "sim": "node scripts/sim-test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "three": "^0.180.0",
+    "ws": "^8.18.0"
+  },
+  "license": "MIT"
+}

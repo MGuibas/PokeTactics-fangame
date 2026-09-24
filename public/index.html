@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Poké Tactics 3D</title>
+  <meta name="description" content="Auto-battler multijugador estilo TFT con Pokémon en 3D cel-shading." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='46' fill='%23e3350d' stroke='%23222' stroke-width='8'/><rect x='4' y='46' width='92' height='8' fill='%23222'/><path d='M4 54 A46 46 0 0 0 96 54Z' fill='%23fff'/><circle cx='50' cy='50' r='14' fill='%23fff' stroke='%23222' stroke-width='8'/></svg>" />
+  <script type="importmap">{ "imports": { "three": "./vendor/three/three.module.js" } }</script>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+  <div id="overlay"></div>
+  <div id="fxlayer"></div>
+
+  <!-- ───────── Menú principal ───────── -->
+  <section id="menu" class="screen">
+    <div class="menu-card">
+      <div class="logo">
+        <div class="logo-ball"></div>
+        <h1>Poké<span>Tactics</span> <em>3D</em></h1>
+        <p class="tagline">¡El auto-battler de entrenadores! Recluta, evoluciona y combate.</p>
+      </div>
+      <label class="field">
+        <span>Tu nombre de entrenador</span>
+        <input id="name-input" maxlength="16" placeholder="Ash" autocomplete="off" />
+      </label>
+      <div class="field">
+        <span>Tu compañero</span>
+        <div id="avatar-picker" class="avatar-picker"></div>
+      </div>
+      <div class="menu-buttons">
+        <button id="btn-solo" class="btn big primary">🎮 Jugar contra bots</button>
+        <button id="btn-multi" class="btn big secondary">🌐 Multijugador</button>
+        <button id="btn-help" class="btn ghost">📖 Cómo se juega</button>
+      </div>
+      <p class="fineprint">Proyecto fan sin ánimo de lucro. Pokémon es marca de Nintendo, Game Freak y Creatures.</p>
+    </div>
+  </section>
+
+  <!-- ───────── Multijugador ───────── -->
+  <section id="lobby" class="screen hidden">
+    <div class="menu-card wide">
+      <button class="btn ghost back" data-back>← Volver</button>
+      <div id="lobby-browse">
+        <h2>Multijugador</h2>
+        <div class="lobby-actions">
+          <button id="btn-create" class="btn primary">＋ Crear sala</button>
+          <label class="check"><input type="checkbox" id="chk-public" checked /> Sala pública</label>
+        </div>
+        <div class="join-row">
+          <input id="code-input" maxlength="5" placeholder="CÓDIGO" autocomplete="off" />
+          <button id="btn-join" class="btn secondary">Unirse</button>
+        </div>
+        <h3>Salas públicas</h3>
+        <div id="room-list" class="room-list"><p class="muted">Conectando…</p></div>
+      </div>
+      <div id="lobby-room" class="hidden">
+        <h2>Sala <span id="room-code" class="code"></span></h2>
+        <p class="muted">Comparte el código con tus amigos. Los huecos vacíos se llenarán con bots.</p>
+        <div id="member-list" class="member-list"></div>
+        <div class="lobby-actions">
+          <button id="btn-addbot" class="btn ghost">🤖 Añadir bot</button>
+          <button id="btn-start" class="btn big primary">¡Empezar partida!</button>
+          <button id="btn-leave" class="btn ghost">Salir</button>
+        </div>
+      </div>
+      <p id="lobby-status" class="status"></p>
+    </div>
+  </section>
+
+  <!-- ───────── Ayuda ───────── -->
+  <section id="help" class="screen hidden">
+    <div class="menu-card wide scroll">
+      <button class="btn ghost back" data-back>← Volver</button>
+      <h2>Cómo se juega</h2>
+      <div class="help-grid">
+        <div><h4>🛒 Recluta</h4><p>Compra Pokémon en la tienda con oro. Arrástralos del banquillo al tablero. Tu nivel marca cuántos caben.</p></div>
+        <div><h4>✨ Evoluciona</h4><p>¡3 copias iguales evolucionan! Charmander ×3 → Charmeleon, y 3 Charmeleon → Charizard. Las líneas de 2 etapas acaban en <b>Mega</b> o <b>Gigamax</b>.</p></div>
+        <div><h4>🔥 Tipos y sinergias</h4><p>Los tipos y roles repetidos activan bonus. Además hay <b>tabla de tipos</b>: ¡el Agua es súper eficaz contra el Fuego!</p></div>
+        <div><h4>🌦️ Clima</h4><p>Cada etapa trae un clima (Sol, Lluvia, Arena, Nieve…) que potencia a ciertos tipos. Mira el pronóstico y prepárate.</p></div>
+        <div><h4>🎯 Capturas</h4><p>Tras vencer a Pokémon salvajes puedes lanzar una Poké Ball. ¡Pulsa cuando el anillo sea pequeño!</p></div>
+        <div><h4>🔴 Dinamax</h4><p>Durante el combate, carga y pulsa <b>DINAMAX</b> para que un Pokémon tuyo se vuelva gigante.</p></div>
+        <div><h4>🏅 Medallas</h4><p>Al empezar las etapas 2, 3 y 4 eliges una medalla con poderes especiales.</p></div>
+        <div><h4>🦁 Zona Safari</h4><p>Ronda de reparto: el que menos vida tiene elige primero un Pokémon con objeto.</p></div>
+        <div><h4>🌟 Shinies y Pokédex</h4><p>Los shinies son raros y más fuertes. Registra especies en tu Pokédex para ganar premios.</p></div>
+        <div><h4>🎁 Sorpresas</h4><p>Magikarp es inútil… hasta que evoluciona. Eevee evoluciona según tu tipo dominante. ¡Y Clefairy usa Metrónomo!</p></div>
+        <div><h4>⌨️ Atajos</h4><p><b>D</b> actualizar · <b>F</b> subir nivel · <b>E</b> vender (ratón encima) · <b>W</b> listo · <b>Espacio</b> Dinamax.</p></div>
+        <div><h4>💞 Amistad</h4><p>Los Pokémon que combaten 5 rondas contigo alcanzan la amistad máxima y ganan estadísticas.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────── HUD de partida ───────── -->
+  <section id="hud" class="hidden">
+    <div id="topbar">
+      <div id="weather-card" class="pill-card"></div>
+      <div id="stage-card">
+        <div id="stage-label"></div>
+        <div id="round-track"></div>
+        <div id="timer"><div id="timer-fill"></div></div>
+      </div>
+      <div id="event-card" class="pill-card"></div>
+    </div>
+    <div id="traits"></div>
+    <div id="players"></div>
+    <div id="items-panel"><div class="panel-title">Objetos</div><div id="items"></div></div>
+    <div id="side-buttons">
+      <button id="btn-ready" class="btn round" title="Listo (W)">✅<span>Listo</span></button>
+      <button id="btn-auto" class="btn round" title="Colocar automáticamente">🪄<span>Auto</span></button>
+      <button id="btn-dex" class="btn round" title="Pokédex">📕<span id="dex-count">0</span></button>
+      <button id="btn-emote" class="btn round" title="Emotes">😄<span>Emote</span></button>
+      <button id="btn-sound" class="btn round" title="Sonido">🔊<span>Sonido</span></button>
+    </div>
+    <div id="emote-wheel" class="hidden"></div>
+    <div id="dyna-wrap" class="hidden"><button id="btn-dyna" class="btn dyna">DINAMAX<small id="dyna-sub"></small></button></div>
+    <div id="capture-btn" class="hidden"></div>
+    <div id="badge-btn" class="hidden"></div>
+    <div id="scout-banner" class="hidden"></div>
+    <div id="shop">
+      <div id="shop-left">
+        <div id="level-box">
+          <div id="level-label">Nv. 1</div>
+          <div id="xp-bar"><div id="xp-fill"></div><span id="xp-text"></span></div>
+        </div>
+        <button id="btn-xp" class="btn shopbtn">⬆️ Subir nivel <b>4💰</b></button>
+        <button id="btn-reroll" class="btn shopbtn">🔄 Actualizar <b id="reroll-cost">2💰</b></button>
+      </div>
+      <div id="shop-cards"></div>
+      <div id="shop-right">
+        <div id="gold"><span class="coin"></span><b id="gold-val">0</b></div>
+        <div id="streak"></div>
+        <button id="btn-lock" class="btn lock" title="Bloquear tienda">🔓</button>
+      </div>
+      <div id="sell-zone">Suelta aquí para vender <b id="sell-val"></b></div>
+    </div>
+    <div id="chat">
+      <div id="chat-log"></div>
+      <input id="chat-input" maxlength="140" placeholder="Enter para chatear…" autocomplete="off" />
+    </div>
+  </section>
+
+  <div id="tooltip" class="hidden"></div>
+  <div id="banner" class="hidden"></div>
+  <div id="toasts"></div>
+  <div id="modal" class="hidden"></div>
+  <div id="loading"><div class="logo-ball spin"></div><p>Cargando…</p></div>
+
+  <script type="module" src="js/client/main.js"></script>
+</body>
+</html>
