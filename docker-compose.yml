@@ -1,0 +1,9 @@
+services:
+  poketactics:
+    build: .
+    container_name: poketactics
+    ports:
+      - "8097:8097"
+    environment:
+      - PORT=8097
+    restart: unless-stopped

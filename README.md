@@ -23,6 +23,19 @@ npm start        # servidor en http://localhost:3000
 
 Puerto configurable con `PORT=8080 npm start`.
 
+### Docker (puerto 8097)
+
+```bash
+docker compose up -d --build      # http://localhost:8097
+```
+
+O sin compose:
+
+```bash
+docker build -t poketactics .
+docker run -d --name poketactics -p 8097:8097 --restart unless-stopped poketactics
+```
+
 ### Controles
 
 | Acción | Cómo |
