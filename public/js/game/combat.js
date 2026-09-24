@@ -102,8 +102,8 @@ export class Combat {
     // Sinergias.
     const L = (id) => tl[id] || 0;
     const lv = (id, arr) => (L(id) ? arr[L(id) - 1] : 0);
-    if (has('normal') && L('normal')) { hpPct += lv('normal', [0.15, 0.35]); atkPct += lv('normal', [0.15, 0.35]); }
-    if (has('fuego') && L('fuego') >= 2) dmgAmp += 0.25;
+    if (has('normal') && L('normal')) { hpPct += lv('normal', [0.2, 0.45]); atkPct += lv('normal', [0.2, 0.45]); }
+    if (has('fuego') && L('fuego')) dmgAmp += lv('fuego', [0.1, 0.3]);
     if (has('lucha') && L('lucha')) { atkPct += lv('lucha', [0.2, 0.45]); vamp += lv('lucha', [0.1, 0.2]); }
     if (has('tierra')) def += lv('tierra', [20, 40, 70]);
     if (has('volador') && L('volador')) { dodge += lv('volador', [0.1, 0.2, 0.35]); asPct += lv('volador', [0.1, 0.2, 0.35]); }
@@ -119,7 +119,7 @@ export class Combat {
     if (has('atacante')) atkPct += lv('atacante', [0.15, 0.35, 0.6]);
     if (has('veloz')) asPct += lv('veloz', [0.15, 0.35, 0.6]);
     if (has('tirador') && L('tirador')) { range += 1; dmgAmp += lv('tirador', [0.15, 0.35]); }
-    if (has('mistico')) { ap += lv('mistico', [20, 50, 90]); mana0 += lv('mistico', [0, 10, 20]); }
+    if (has('mistico')) { ap += lv('mistico', [25, 60, 100]); mana0 += lv('mistico', [0, 10, 20]); }
     if (L('mistico') >= 3 && !has('mistico')) ap += 25;
 
     // Medallas.
@@ -168,7 +168,7 @@ export class Combat {
       dyna: false, dynaUntil: 0, dynaBonus: 0, boss: isBoss,
       dmgDone: 0, dmgTaken: 0, healDone: 0,
       cc: !itemSet.has('hierbamental'),
-      fireBurn: has('fuego') ? lv('fuego', [0.015, 0.03]) : 0,
+      fireBurn: has('fuego') ? lv('fuego', [0.02, 0.035]) : 0,
       waterRegen: has('agua') ? lv('agua', [3, 6, 10]) : 0,
       badges,
     };

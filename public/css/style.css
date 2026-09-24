@@ -383,6 +383,18 @@ input { font-family: inherit; }
 #recap .r .bar i { display: block; height: 100%; background: linear-gradient(90deg, #ff8a3a, #ffcb05); }
 
 /* ───────── Responsive ───────── */
+@media (max-height: 760px) {
+  #players { transform: scale(.82); transform-origin: top right; }
+  #traits { transform: scale(.85); transform-origin: top left; max-height: calc((100vh - 300px) / .85); }
+  #items-panel { bottom: 142px; }
+  #side-buttons { bottom: 142px; }
+}
+#rotate-hint { display: none; }
+@media (orientation: portrait) and (max-width: 700px) {
+  #rotate-hint { display: flex; position: fixed; inset: auto 8px 8px 8px; z-index: 90; background: rgba(14,18,36,.95); border: 2px solid var(--gold);
+    border-radius: 14px; padding: 10px 14px; align-items: center; gap: 10px; font-weight: 600; pointer-events: auto; }
+  #rotate-hint span { font-size: 26px; animation: wobble 2s infinite; }
+}
 @media (max-width: 900px), (max-height: 620px) {
   #traits { top: 80px; transform: scale(.85); transform-origin: top left; }
   #players { width: 150px; transform: scale(.85); transform-origin: top right; }
@@ -402,4 +414,24 @@ input { font-family: inherit; }
   #items-panel, #side-buttons { bottom: 100px; transform: scale(.7); }
   #traits { transform: scale(.7); }
   #players { transform: scale(.7); }
+}
+
+/* Pantallas bajas (móvil en horizontal) */
+@media (max-height: 500px) {
+  #topbar { transform: translateX(-50%) scale(.66); transform-origin: top center; top: 2px; }
+  #shop { transform: translateX(-50%) scale(.56); transform-origin: bottom center; width: 1000px; bottom: 2px; }
+  #players { transform: scale(.58); top: 4px; transform-origin: top right; }
+  #traits { transform: scale(.6); top: 56px; transform-origin: top left; max-height: calc((100vh - 170px) / .6); }
+  #items-panel { transform: scale(.6); transform-origin: bottom left; bottom: 86px; }
+  #side-buttons { transform: scale(.6); transform-origin: bottom right; bottom: 86px; }
+  #dyna-wrap { transform: scale(.7); transform-origin: bottom right; bottom: 124px; }
+  #capture-btn, #badge-btn { top: 64px; transform: translateX(-50%) scale(.8); }
+  #badge-btn { top: 100px; }
+  #scout-banner { top: 60px; }
+  #banner { font-size: 30px; } #banner small { font-size: 15px; }
+  #toasts { top: 70px; transform: translateX(-50%) scale(.8); }
+  #chat { display: none; }
+  #tooltip { transform: scale(.8); transform-origin: top left; }
+  #safari-ui { top: 58px; transform: translateX(-50%) scale(.75); }
+  .modal-box { transform: scale(.8); }
 }

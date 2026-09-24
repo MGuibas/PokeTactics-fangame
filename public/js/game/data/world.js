@@ -93,7 +93,7 @@ export const XP_COST = 4;
 export const XP_PER_BUY = 4;
 export const MAX_ITEMS = 10;
 export const SHINY_CHANCE = 1 / 40;
-export const STAGE_DAMAGE = [0, 0, 2, 5, 8, 10, 12, 17, 22, 30];
+export const STAGE_DAMAGE = [0, 0, 3, 6, 9, 12, 16, 20, 25, 30];
 
 // Estructura de rondas por etapa.
 export function roundType(stage, round) {

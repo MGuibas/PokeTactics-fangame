@@ -115,8 +115,12 @@ scripts/
   extrusión de normales en espacio de pantalla (grosor constante en píxeles). Cada Pokémon se fusiona en pocas
   geometrías con colores por vértice para que dibujar 20+ criaturas sea barato.
 
-### Probar el equilibrio
+### Probar el equilibrio y la interfaz
 
 ```bash
 npm run sim -- 5   # 5 partidas completas de 8 bots, sin navegador
 ```
+
+Para desarrollo, `?auto=solo` arranca una partida directamente y `?auto=solo&debug=1` habilita el mensaje
+`cheat` (solo en la partida local del navegador) que usan los scripts de Playwright de `scripts/` para saltar
+etapas, dar oro o Pokémon y probar evoluciones, incursiones y el final de partida.

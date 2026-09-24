@@ -30,8 +30,8 @@ export const ROLES = {
 
 // Sinergias: umbrales y descripción por nivel.
 export const TRAITS = {
-  normal:    { th: [2, 4], desc: 'Adaptabilidad: los Pokémon Normal ganan PS y Ataque.', lv: ['+15% PS y Atq', '+35% PS y Atq'] },
-  fuego:     { th: [2, 4], desc: 'Los golpes de tipo Fuego queman al objetivo (daño por segundo).', lv: ['Queman 1,5% PS/s', 'Queman 3% PS/s y +25% daño'] },
+  normal:    { th: [2, 4], desc: 'Adaptabilidad: los Pokémon Normal ganan PS y Ataque.', lv: ['+20% PS y Atq', '+45% PS y Atq'] },
+  fuego:     { th: [2, 4], desc: 'Los Fuego hacen más daño y sus golpes queman al objetivo.', lv: ['+10% daño, queman 2% PS/s', '+30% daño, queman 3,5% PS/s'] },
   agua:      { th: [2, 4, 6], desc: 'Los Pokémon Agua regeneran PP cada segundo.', lv: ['+3 PP/s', '+6 PP/s', '+10 PP/s y todo el equipo +3'] },
   planta:    { th: [2, 4], desc: 'Fotosíntesis: todo el equipo regenera PS.', lv: ['1,5% PS/s', '3% PS/s'] },
   electrico: { th: [2, 4], desc: 'Los ataques Eléctricos pueden soltar una descarga en cadena.', lv: ['25%: 70 daño', '40%: 140 daño y paraliza'] },
@@ -50,7 +50,7 @@ export const TRAITS = {
   atacante:  { th: [2, 4, 6], desc: 'Los Atacantes ganan Ataque.', lv: ['+15% Atq', '+35% Atq', '+60% Atq'] },
   veloz:     { th: [2, 4, 6], desc: 'Los Veloces ganan velocidad de ataque.', lv: ['+15% VA', '+35% VA', '+60% VA'] },
   tirador:   { th: [2, 4], desc: 'Los Tiradores ganan alcance y daño.', lv: ['+1 alcance, +15% daño', '+1 alcance, +35% daño'] },
-  mistico:   { th: [2, 4, 6], desc: 'Los Místicos ganan Poder y empiezan con PP.', lv: ['+20 Poder', '+50 Poder, +10 PP', '+90 Poder, +20 PP (equipo +25)'] },
+  mistico:   { th: [2, 4, 6], desc: 'Los Místicos ganan Poder y empiezan con PP.', lv: ['+25 Poder', '+60 Poder, +10 PP', '+100 Poder, +20 PP (equipo +25)'] },
   soporte:   { th: [2, 4], desc: 'Todo el equipo recibe escudos al inicio y a los 8 s.', lv: ['Escudo 150', 'Escudo 350'] },
 };
 

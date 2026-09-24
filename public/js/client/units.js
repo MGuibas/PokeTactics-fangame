@@ -65,7 +65,7 @@ export class UnitView {
   }
 
   buildModel() {
-    const sMul = formScale(this.line, this.star) * this.scaleMul * (this.boss ? 2.1 : 1);
+    const sMul = formScale(this.line, this.star) * this.scaleMul * (this.boss ? 1.45 : 1);
     this.model = createModel(this.form, this.shiny, { scale: sMul });
     this.group.add(this.model.root);
     this.baseScale = this.model.root.scale.x;

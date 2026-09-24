@@ -290,7 +290,29 @@ export class GameRoom {
         break;
       }
       case 'autoplace': this.autoPlace(p); break;
+      case 'cheat': if (this.options.debug) this.cheat(p, msg); break;
     }
+  }
+
+  // Solo en modo depuración local (?debug=1): acelera pruebas.
+  cheat(p, m) {
+    if (m.gold) p.gold += m.gold | 0;
+    if (m.dyna) p.dyna = 3;
+    if (m.weakOthers) for (const o of this.players) if (o !== p) o.hp = 1;
+    if (m.weather) { this.weather = m.weather; this.roomDirty = true; }
+    if (m.level) { p.level = Math.min(MAX_LEVEL, m.level | 0); p.xp = 0; }
+    if (m.stage) { this.stage = m.stage | 0; this.round = (m.round | 0) || 1; }
+    for (const l of m.give || []) {
+      const i = p.benchFree();
+      if (i < 0 || !LINES[l.line || l]) break;
+      const u = this.makeUnit(l.line || l, l.star || 1, !!l.shiny);
+      p.bench[i] = u;
+      this.register(p, u);
+    }
+    for (const it of m.items || []) if (ITEMS[it]) this.giveItem(p, it);
+    if (m.give) this.checkCombine(p);
+    p.dirty = true;
+    this.roomDirty = true;
   }
 
   canShop(p) {
@@ -968,6 +990,7 @@ export class GameRoom {
       p.hp = 0;
       p.place = this.alive().length + 1;
       this.ranking.unshift({ id: p.id, name: p.name, place: p.place });
+      p.finalBoard = p.board.map((u) => ({ form: u.form, star: u.star, shiny: u.shiny }));
       for (const u of p.all()) this.pool[u.line] += this.copies(u);
       p.board = []; p.bench = new Array(BENCH_SIZE).fill(null);
       this.fx(p, { kind: 'eliminated', place: p.place });
@@ -983,7 +1006,7 @@ export class GameRoom {
         this.ranking.unshift({ id: alive[0].id, name: alive[0].name, place: 1 });
       }
       this.phase = 'ended';
-      this.broadcast({ t: 'gameover', ranking: this.ranking, players: this.players.map((p) => ({ id: p.id, name: p.name, place: p.place, avatar: p.avatar, stats: p.stats, board: p.board.map((u) => ({ form: u.form, star: u.star, shiny: u.shiny })) })) });
+      this.broadcast({ t: 'gameover', ranking: this.ranking, players: this.players.map((p) => ({ id: p.id, name: p.name, place: p.place, avatar: p.avatar, stats: p.stats, board: p.alive ? p.board.map((u) => ({ form: u.form, star: u.star, shiny: u.shiny })) : p.finalBoard || [] })) });
       this.roomDirty = true;
       return;
     }

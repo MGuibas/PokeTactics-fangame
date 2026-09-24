@@ -246,7 +246,13 @@ export class GameClient {
       if (enemy && m.time < 200) {
         v.group.visible = false;
         v.bar.style.visibility = 'hidden';
-        setTimeout(() => this.fx.pokeball(pos, () => { v.group.visible = true; v.bar.style.visibility = ''; v.jump(); if (v.shiny) { sfx.play('shiny'); this.fx.sparkle(v.midPos(), 0xffffff, 20, 0.7); } }), 150 + Math.random() * 450);
+        const reveal = () => {
+          if (v.group.visible) return;
+          v.group.visible = true; v.bar.style.visibility = ''; v.jump();
+          if (v.shiny) { sfx.play('shiny'); this.fx.sparkle(v.midPos(), 0xffffff, 20, 0.7); }
+        };
+        setTimeout(() => this.fx.pokeball(pos, reveal), 150 + Math.random() * 450);
+        setTimeout(reveal, 1300);
       }
     }
     this.refreshBoard();
@@ -874,7 +880,7 @@ export class GameClient {
       const rot = t * 0.25;
       for (const v of this.sviews.values()) {
         const a = v.angle + rot;
-        v.pos.set(Math.cos(a) * 3.4, 0, Math.sin(a) * 3.4 - 0.4);
+        v.pos.set(Math.cos(a) * 3.6, 0, Math.sin(a) * 3.2 + 1.0);
         v.faceYaw(Math.atan2(-v.pos.x, -v.pos.z) + Math.PI);
         v.update(dt, t);
       }

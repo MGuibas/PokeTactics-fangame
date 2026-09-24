@@ -7,7 +7,7 @@
   <meta name="description" content="Auto-battler multijugador estilo TFT con Pokémon en 3D cel-shading." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'" />
   <link rel="stylesheet" href="css/style.css" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='46' fill='%23e3350d' stroke='%23222' stroke-width='8'/><rect x='4' y='46' width='92' height='8' fill='%23222'/><path d='M4 54 A46 46 0 0 0 96 54Z' fill='%23fff'/><circle cx='50' cy='50' r='14' fill='%23fff' stroke='%23222' stroke-width='8'/></svg>" />
   <script type="importmap">{ "imports": { "three": "./vendor/three/three.module.js" } }</script>
@@ -148,6 +148,7 @@
   <div id="banner" class="hidden"></div>
   <div id="toasts"></div>
   <div id="modal" class="hidden"></div>
+  <div id="rotate-hint" onclick="this.remove()"><span>📱↻</span> Gira el móvil en horizontal para jugar mejor (toca para cerrar)</div>
   <div id="loading"><div class="logo-ball spin"></div><p>Cargando…</p></div>
 
   <script type="module" src="js/client/main.js"></script>

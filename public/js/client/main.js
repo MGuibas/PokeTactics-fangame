@@ -114,7 +114,7 @@ function startGame(net, myId, solo) {
 }
 
 function startSolo() {
-  const net = new LocalTransport({ name: playerName(), avatar: prefs.avatar });
+  const net = new LocalTransport({ name: playerName(), avatar: prefs.avatar, debug: new URLSearchParams(location.search).has('debug') });
   const off = net.on((m) => {
     if (m.t === 'gameStart') { off(); startGame(net, m.you, true); }
   });
@@ -213,6 +213,10 @@ startMenuScene();
 showScreen('menu');
 setTimeout(() => $('loading').classList.add('gone'), 300);
 setTimeout(() => $('loading').remove(), 900);
+// Si había una partida multijugador en curso (recarga de página), intenta volver a ella.
+try {
+  if (sessionStorage.getItem('pt3d-token') && location.protocol !== 'file:' && !qs.get('auto')) connectWs();
+} catch {}
 if (qs.get('sala')) {
   openLobby();
   setTimeout(() => ws && ws.send({ t: 'join', code: qs.get('sala').toUpperCase() }), 400);

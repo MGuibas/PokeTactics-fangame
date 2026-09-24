@@ -39,11 +39,12 @@ export class WsTransport {
 const BOT_NAMES = ['Ash', 'Misty', 'Brock', 'Gary', 'Dawn', 'May', 'Serena', 'Cynthia', 'Red', 'Lillie', 'Hop', 'Nemona', 'Iris', 'Leon', 'Marnie'];
 
 export class LocalTransport {
-  constructor({ name, avatar, bots = 7 }) {
+  constructor({ name, avatar, bots = 7, debug = false }) {
     this.handlers = new Set();
     this.id = 'me';
     this.room = new GameRoom({
       code: 'SOLO',
+      options: { debug },
       send: (pid, msg) => {
         if (pid !== this.id) return;
         // Copia para imitar la red (evita compartir referencias mutables).
