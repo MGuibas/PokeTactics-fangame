@@ -10,9 +10,10 @@ import { FORMS, LINES } from '../game/data/pokemon.js';
 import { ITEMS } from '../game/data/items.js';
 import { WEATHERS, BADGES } from '../game/data/world.js';
 import { mirror, COLS } from '../game/hex.js';
-import { CAROUSEL, AV_HOME } from '../game/room.js';
+import { CAROUSEL, AV_HOME, AV_SPEED } from '../game/room.js';
 import { TrainerView, OrbView } from './trainer.js';
 import { itemIcon } from './icons.js';
+import { showUnitPanel } from './panel.js';
 
 const $ = (id) => document.getElementById(id);
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -29,6 +30,7 @@ export class GameClient {
     this.me = null;
     this.room = null;
     this.views = new Map(); // tablero/banquillo (uid)
+    this.seenUnits = new Set();
     this.cviews = new Map(); // combate (id)
     this.sviews = new Map(); // safari
     this.fight = null;
@@ -46,12 +48,13 @@ export class GameClient {
     this.unsub = net.on((m) => this.onMsg(m));
     this.bindInput();
     this.stopUpdate = engine.onUpdate((dt, t) => this.update(dt, t));
-    this.trainer = null; // entrenador del jugador mostrado (propio o espiado)
+    this.trainers = new Map(); // entrenadores visibles en la isla mostrada (dueño, visitas y rival)
+    this.avs = new Map(); // posición e isla de cada entrenador según el servidor
     this.carTrainers = new Map(); // entrenadores en el carrusel
     this.orbViews = new Map();
     this.carRot = 0;
     this.carDeco = null;
-    sfx.setMood('calm');
+    sfx.setMood('planning');
     // Pre-renderiza retratos de formas base.
     warmPortraits(Object.values(LINES).map((l) => [l.forms[0], false]));
   }
@@ -91,7 +94,7 @@ export class GameClient {
     if (room.phase === 'safari') this.renderSafari();
     else if (this.sviews.size) this.clearSafari();
     this.refreshBoard();
-    this.updateTrainer();
+    this.onAvatars(room.players.map((p) => [p.id, ...(p.av || [AV_HOME.x, AV_HOME.z, AV_HOME.x, AV_HOME.z, p.id])]), true);
     this.syncOrbs();
   }
 
@@ -105,15 +108,13 @@ export class GameClient {
   onPhase(from, to) {
     if (to === 'planning') {
       this.exitCombat();
-      sfx.setMood('calm');
+      sfx.setMood('planning');
       this.dynaArmed = false;
       this.dynaUsed = false;
       if (this.me?.pendingBadge && !this.badgeOpen) setTimeout(() => this.me?.pendingBadge && this.hud.showBadges(this.me.pendingBadge), 900);
     }
-    if (to === 'combat') {
-      sfx.setMood('battle');
-    }
     if (to === 'safari') {
+      sfx.setMood('safari');
       this.exitCombat();
       this.hud.banner('¡Zona Safari!', '', 'Los entrenadores con menos vida salen primero');
       this.engine.camTarget.set(0, 0, 1.2);
@@ -145,12 +146,13 @@ export class GameClient {
   onFx(m) {
     switch (m.kind) {
       case 'evolve': {
-        sfx.play('evolve');
+        sfx.jingle('evolution');
         this.hud.toast(m.text, true);
         const v = this.views.get(m.uid);
         if (v) {
           v.evolveFx(() => {
             v.swapModel(m.to, v.shiny, m.star);
+            setTimeout(() => sfx.cry(m.to, FORMS[m.to].line, m.star, { pan: this.panOf(v) }), 250);
             this.fx.sparkle(v.group.position.clone().add(V3(0, 0.6, 0)), 0xffffff, 26, 0.9);
             this.fx.ring(v.group.position, 2, 0xfff4a0, 0.6);
           });
@@ -161,7 +163,16 @@ export class GameClient {
       }
       case 'levelup': sfx.play('level'); this.hud.toast(`¡Nivel ${m.level}! Ya caben ${m.level} Pokémon en el tablero.`); break;
       case 'toast': this.hud.toast(m.text, m.big); if (m.text.includes('lleno') || m.text.includes('Máximo')) sfx.play('error'); break;
-      case 'item': sfx.play('place'); break;
+      case 'item': sfx.play('equip'); break;
+      case 'unequip': {
+        sfx.play('magnet');
+        const v = this.views.get(m.uid);
+        if (v) {
+          this.fx.burst(v.midPos(), 0xe2574c, 12, 3, 0.3, 0.4);
+          m.items.forEach((it, i) => setTimeout(() => this.fx.text(v.topPos().add(V3(0, 0.4 + i * 0.45, 0)), ITEMS[it]?.name || '', 'txt', 1.3), i * 150));
+        }
+        break;
+      }
       case 'badge': sfx.play('badge'); this.hud.toast(`Medalla obtenida: ${BADGES[m.id].name}`, true); break;
       case 'capture': this.onCaptureResult(m); break;
       case 'eliminated': this.hud.banner('Eliminado', 'lose', `Has quedado ${m.place}º`); sfx.play('lose'); break;
@@ -179,10 +190,10 @@ export class GameClient {
 
   onEmote(m) {
     this.hud.emote(m.from, m.e);
-    const viewed = this.scoutId || this.myId;
-    if (m.from === viewed && this.trainer) {
-      this.fx.text(this.trainer.view.topPos().add(V3(0, 0.6, 0)), m.e, 'txt big', 2);
-      this.trainer.view.jump();
+    const tr = this.trainers.get(m.from);
+    if (tr) {
+      this.fx.text(tr.view.topPos().add(V3(0, 0.6, 0)), m.e, 'txt big', 2);
+      tr.view.jump();
     }
     const ct = this.carTrainers.get(m.from);
     if (ct) { this.fx.text(ct.view.topPos().add(V3(0, 0.6, 0)), m.e, 'txt big', 2); ct.view.jump(); }
@@ -190,7 +201,7 @@ export class GameClient {
 
   onGameOver(m) {
     const me = m.players.find((p) => p.id === this.myId);
-    sfx.play(me?.place === 1 ? 'win' : 'lose');
+    sfx.jingle(me?.place === 1 ? 'champion' : 'gameover');
     setTimeout(() => this.hud.showGameOver(m, this.myId, () => this.exit()), 1200);
   }
 
@@ -238,6 +249,8 @@ export class GameClient {
         v.yaw = 0;
         this.views.set(uid, v);
         if (!sp) this.fx.burst(pos.clone().add(V3(0, 0.3, 0)), 0xffffff, 8, 2, 0.3, 0.3);
+        // Grito al llegar un Pokémon nuevo a tu equipo.
+        if (!sp && !this.seenUnits.has(uid)) { if (this._boardReady) sfx.cry(u.form, u.line, u.star, { vol: 0.8, pan: this.panOf(v) }); this.seenUnits.add(uid); }
       } else if (!v.dragging) {
         if (v.pos.distanceTo(pos) > 0.01) v.moveTo(pos, 220, 0.5);
       }
@@ -251,6 +264,14 @@ export class GameClient {
       v.own = !sp;
       if (!v.dragging && !v.act) v.faceYaw(0);
     }
+    if (!sp) this._boardReady = true;
+  }
+
+  // Panorámica estéreo según la posición en pantalla.
+  panOf(v) {
+    if (!v?.group) return 0;
+    const s = this.engine.toScreen(v.group.position);
+    return Math.max(-1, Math.min(1, (s.x / this.engine.width) * 2 - 1)) * 0.6;
   }
 
   // ───────────────────────── Combate ─────────────────────────
@@ -278,12 +299,15 @@ export class GameClient {
           if (v.group.visible) return;
           v.group.visible = true; v.bar.style.visibility = ''; v.jump();
           if (v.shiny) { sfx.play('shiny'); this.fx.sparkle(v.midPos(), 0xffffff, 20, 0.7); }
+          sfx.play('ballopen');
+          sfx.cry(v.form, v.line, v.star, { vol: 0.55, pan: this.panOf(v) });
         };
         setTimeout(() => this.fx.pokeball(pos, reveal), 150 + Math.random() * 450);
         setTimeout(reveal, 1300);
       }
     }
     this.refreshBoard();
+    this.syncTrainers();
     if (m.time < 200) {
       if (m.kind === 'pvp') {
         const opp = m.sides[1 - f.mySide];
@@ -291,6 +315,7 @@ export class GameClient {
       } else this.hud.banner(m.kind === 'raid' ? '¡Incursión Dinamax!' : m.kind === 'gym' ? '¡Desafío!' : '¡Pokémon salvajes!', '', esc(m.title));
       sfx.play('fight');
     }
+    sfx.setMood(m.kind === 'pvp' ? 'battle' : m.kind === 'gym' ? 'battle-gym' : m.kind === 'raid' ? 'raid' : 'battle-wild');
     this.hud.renderMe(this.me);
   }
 
@@ -324,12 +349,23 @@ export class GameClient {
         if (v && !v.dead) v.moveTo(this.combatPos(e.x, e.y), e.d, 0.3);
         break;
       }
+      case 'item': {
+        const v = V(e.u);
+        if (v && !v.dead) {
+          v.items = e.items;
+          v.updateBar();
+          this.fx.sparkle(v.midPos(), 0xfff1a0, 14, 0.7);
+          this.fx.ring(v.pos, 1.3, 0xffe07a, 0.4);
+        }
+        break;
+      }
       case 'atk': {
         const a = V(e.u), t = V(e.tg);
         if (!a || !t) break;
         if (e.r) {
           a.shoot(t.pos);
-          this.fx.projectile(a.midPos(), t.midPos(), TYPE_COLOR[a.types[0]] || 0xffffff, e.d / 1000, 0.13, 0.3);
+          sfx.play('shot', { pan: this.panOf(a) });
+          this.fx.projectile(a.midPos(), t.midPos(), TYPE_COLOR[a.types[0]] || 0xffffff, e.d / 1000, 0.13, 0.3, a.shot);
         } else a.lunge(t.pos);
         break;
       }
@@ -345,7 +381,7 @@ export class GameClient {
         this.fx.text(t.topPos(), String(e.a), cls, 0.9, (Math.random() - 0.5) * 30);
         if (!e.dot) {
           t.hitFlash();
-          sfx.play(e.c ? 'crit' : 'hit');
+          sfx.play(e.c ? 'crit' : 'hit', { pan: this.panOf(t) });
           if (e.e > 0 && e.a > 60 && Math.random() < 0.35) { this.fx.text(t.topPos().add(V3(0, 0.5, 0)), '¡Súper eficaz!', 'txt small', 1.2); sfx.play('se'); }
           if (e.a > 250) this.fx.impact(t.midPos(), t.types?.[0], true);
         }
@@ -378,9 +414,11 @@ export class GameClient {
           // proyectiles vía eventos 'proj'
         } else {
           this.fx.cast(e.kind, e.ty, from, to, e.r || 1, e);
-          sfx.play(['blast', 'nova', 'global', 'beam'].includes(e.kind) ? 'blast' : 'cast');
+          sfx.skill(e.ty, e.kind, this.panOf(a));
         }
         if (e.kind === 'splash') sfx.play('splash');
+        // Algunos Pokémon gritan al usar su habilidad.
+        if (Math.random() < 0.35) sfx.cry(a.form, a.line, a.star, { vol: 0.6, pan: this.panOf(a) });
         if (e.kind === 'global') this.engine.shake = 0.8;
         if (e.kind === 'heal' && e.t) for (const id of e.t) { const t = V(id); if (t) this.fx.rising(t.group.position, 0x6cf07e, 6, 0.4); }
         if (e.m) this.fx.text(a.topPos().add(V3(0, 0.45, 0)), e.m, 'txt', 1.4);
@@ -410,7 +448,8 @@ export class GameClient {
         t.die();
         this.fx.burst(t.midPos(), 0xffffff, 16, 4, 0.4, 0.5);
         this.fx.burst(t.midPos(), TYPE_COLOR[t.types?.[0]] || 0xcccccc, 10, 3, 0.35, 0.5);
-        sfx.play('die');
+        sfx.play('die', { pan: this.panOf(t) });
+        sfx.cry(t.form, t.line, t.star, { rate: 0.78, vol: 0.45, pan: this.panOf(t) });
         break;
       }
       case 'txt': {
@@ -473,14 +512,18 @@ export class GameClient {
     const g = m.gold?.[mySide];
     if (g) sub = (sub ? sub + ' · ' : '') + `Día de Pago: +${g} oro`;
     this.hud.banner(txt, cls, sub);
-    if (target === this.myId) sfx.play(cls === 'win' ? 'win' : cls === 'lose' ? 'lose' : 'round');
+    if (target === this.myId) { if (cls === 'win' || cls === 'lose') sfx.jingle(cls === 'win' ? 'victory' : 'defeat'); else sfx.play('round'); }
     for (const v of this.cviews.values()) {
       if (v.dead) continue;
       const won = (v.enemy ? 1 - mySide : mySide) === m.winner;
       if (won) setTimeout(() => v.celebrate(), Math.random() * 300);
     }
     this.showRecap(m.stats, mySide);
-    if (this.trainer) { if (cls === 'win') this.trainer.view.celebrate(); else if (cls === 'lose') this.trainer.view.hitFlash(); }
+    // Los entrenadores celebran o se lamentan según el resultado de su lado.
+    for (const tr of this.trainers.values()) {
+      const r = tr.mirror ? (cls === 'win' ? 'lose' : cls === 'lose' ? 'win' : cls) : cls;
+      if (r === 'win') tr.view.celebrate(); else if (r === 'lose') tr.view.hitFlash();
+    }
   }
 
   showRecap(stats, mySide) {
@@ -499,11 +542,13 @@ export class GameClient {
   exitCombat(keepMode = false) {
     for (const v of this.cviews.values()) v.dispose();
     this.cviews.clear();
+    const hadFight = !!this.fight;
     this.fight = null;
     if (!keepMode) {
       this.mode = 'board';
       this.refreshBoard();
     }
+    if (hadFight) this.syncTrainers();
   }
 
   // ───────────────────────── Dinamax ─────────────────────────
@@ -577,6 +622,7 @@ export class GameClient {
         ball.classList.add('ok');
         msg.textContent = `¡${FORMS[m.form].name} atrapado!`;
         sfx.play('caught');
+        setTimeout(() => sfx.cry(m.form, FORMS[m.form].line, 1), 500);
         setTimeout(() => this.hud.closeModal(), 1600);
       } else {
         msg.textContent = `¡Oh, no! ¡${FORMS[m.form].name} escapó!`;
@@ -601,7 +647,7 @@ export class GameClient {
     if (!s) return;
     if (this.carRot === 0 || Math.abs(this.carRot - s.rot) > 0.3) this.carRot = s.rot;
     this.buildCarouselDeco();
-    if (this.trainer) { this.trainer.dispose(); this.trainer = null; }
+    this.syncTrainers();
     for (const [id, v] of this.orbViews) { v.dispose(false); this.orbViews.delete(id); }
     // Pokémon del carrusel.
     for (const o of s.options) {
@@ -629,6 +675,9 @@ export class GameClient {
       const x = CAROUSEL.cx + Math.cos(ang) * CAROUSEL.pen, z = CAROUSEL.cz + Math.sin(ang) * CAROUSEL.pen;
       const tr = new TrainerView(this.ctx, { pid, form: p.avatar, name: p.name, me: pid === this.myId, x, z });
       tr.view.faceTo(V3(CAROUSEL.cx, 0, CAROUSEL.cz));
+      tr.bot = p.isBot;
+      // Los bots corren algo más despacio por el carrusel (igual que en el servidor).
+      if (p.isBot) tr.speed = AV_SPEED * CAROUSEL.botSpeed;
       this.carTrainers.set(pid, tr);
     }
     this.renderSafariUi();
@@ -686,6 +735,7 @@ export class GameClient {
         const v = this.sviews.get(hold);
         if (v) { tr.held = v; v.heldBy = pid; }
       }
+      if (tr.bot && hold) tr.speed = AV_SPEED;
     }
     this.renderSafariUi();
   }
@@ -698,7 +748,7 @@ export class GameClient {
     if (v && p) {
       this.fx.burst(v.midPos(), 0xffffff, 14, 3, 0.35, 0.4);
       this.fx.text(v.topPos().add(V3(0, 0.5, 0)), p.name, 'txt', 1.4);
-      if (m.pid === this.myId) { sfx.play('buy'); this.carWalking = false; }
+      if (m.pid === this.myId) { sfx.play('buy'); sfx.cry(v.form, v.line, 1); this.carWalking = false; }
     }
   }
 
@@ -710,32 +760,79 @@ export class GameClient {
     if (this.carDeco) { this.engine.scene.remove(this.carDeco); this.carDeco = null; }
     document.getElementById('safari-ui')?.remove();
     this.carWalking = false;
-    this.updateTrainer();
+    this.syncTrainers();
   }
 
-  // ───────────────────────── Entrenador y botín ─────────────────────────
-  updateTrainer() {
-    if (!this.room || this.room.phase === 'safari') return;
-    const p = this.scoutId ? this.viewedPlayer() : this.room.players.find((x) => x.id === this.myId);
-    if (!p) return;
-    if (!this.trainer || this.trainer.form !== p.avatar || this.trainer.pid !== p.id) {
-      this.trainer?.dispose();
-      const [x, z] = p.av || [AV_HOME.x, AV_HOME.z];
-      this.trainer = new TrainerView(this.ctx, { pid: p.id, form: p.avatar, name: p.name, me: p.id === this.myId, x, z });
-      this.trainer.showLabel = false;
-      this.trainer.view.yaw = this.trainer.view.targetYaw = 2.2;
-      if (p.av) this.trainer.walkTo(p.av[2], p.av[3]);
+  // ───────────────────────── Entrenadores y botín ─────────────────────────
+  // Qué entrenadores se ven en la isla mostrada: el dueño y quien esté de visita;
+  // en un combate PvP también el rival y sus visitas, reflejados al otro lado.
+  wantedTrainers() {
+    const out = new Map();
+    const R = this.room;
+    if (!R || R.phase === 'safari') return out;
+    const locs = new Map([[this.scoutId || this.myId, false]]);
+    const f = this.mode === 'combat' && this.fight;
+    if (f && f.kind === 'pvp') {
+      const o = f.sides[1 - f.mySide];
+      if (o && !o.ghost && o.playerId) locs.set(o.playerId, true);
     }
+    for (const p of R.players) {
+      if (!p.alive && p.id !== this.myId) continue;
+      const loc = this.avs.get(p.id)?.loc || p.id;
+      if (locs.has(loc)) out.set(p.id, { p, mirror: locs.get(loc) });
+    }
+    return out;
   }
 
-  onAvatars(list) {
-    if (!this.trainer || this.room?.phase === 'safari') return;
+  syncTrainers() {
+    const want = this.wantedTrainers();
+    for (const [pid, tr] of this.trainers) {
+      const w = want.get(pid);
+      if (w && w.mirror === tr.mirror && w.p.avatar === tr.form) continue;
+      // Se va a otra isla: pequeño salto y desaparece.
+      if (this.room?.phase !== 'safari') this.fx.burst(tr.view.midPos(), 0xffffff, 10, 3, 0.3, 0.35);
+      tr.dispose();
+      this.trainers.delete(pid);
+    }
+    for (const [pid, { p, mirror }] of want) {
+      if (this.trainers.has(pid)) continue;
+      const a = this.avs.get(pid) || { x: AV_HOME.x, z: AV_HOME.z, tx: AV_HOME.x, tz: AV_HOME.z };
+      const m = mirror ? -1 : 1;
+      const tr = new TrainerView(this.ctx, { pid, form: p.avatar, name: p.name, me: pid === this.myId, x: a.x * m, z: a.z * m });
+      tr.mirror = mirror;
+      tr.showLabel = pid !== this.myId || !!this.scoutId;
+      const visiting = (this.avs.get(pid)?.loc || pid) !== pid;
+      tr.view.yaw = tr.view.targetYaw = (visiting ? -2.2 : 2.2) + (mirror ? Math.PI : 0);
+      tr.walkTo(a.tx * m, a.tz * m);
+      if (this._trainersReady) tr.dropIn(() => {
+        this.fx.ring(tr.pos, 1.3, 0xffffff, 0.35);
+        this.fx.burst(tr.pos.clone().add(V3(0, 0.2, 0)), 0xfff1c0, 10, 2.5, 0.3, 0.35);
+        if (pid === this.myId) sfx.play('land');
+      });
+      this.trainers.set(pid, tr);
+    }
+    this._trainersReady = true;
+  }
+
+  onAvatars(list, fromState = false) {
+    let moved = false;
+    for (const [pid, x, z, tx, tz, loc] of list) {
+      const prev = this.avs.get(pid);
+      const l = loc || pid;
+      if (prev?.loc !== l) moved = true;
+      this.avs.set(pid, { x, z, tx, tz, loc: l });
+    }
+    if (this.room?.phase === 'safari') return;
+    if (moved) this.syncTrainers();
     for (const [pid, x, z, tx, tz] of list) {
-      if (pid !== this.trainer.pid) continue;
+      const tr = this.trainers.get(pid);
+      if (!tr || tr.dropping) continue;
+      const m = tr.mirror ? -1 : 1;
       const mine = pid === this.myId;
-      this.trainer.setServer(x, z, tx, tz, mine && this.walkingLocal);
-      if (!mine || !this.walkingLocal) this.trainer.walkTo(tx, tz);
-      if (mine && Math.hypot(tx - this.trainer.target.x, tz - this.trainer.target.z) < 0.05) this.walkingLocal = false;
+      if (fromState && mine && this.walkingLocal) continue;
+      tr.setServer(x * m, z * m, tx * m, tz * m, mine && this.walkingLocal);
+      if (!mine || !this.walkingLocal) tr.walkTo(tx * m, tz * m);
+      if (mine && Math.hypot(tx - tr.target.x, tz - tr.target.z) < 0.05) this.walkingLocal = false;
     }
   }
 
@@ -750,7 +847,7 @@ export class GameClient {
 
   // Ordena caminar al entrenador (clic derecho o toque en el suelo).
   walkTo(e) {
-    if (!this.me?.alive || this.scoutId) return false;
+    if (!this.me?.alive) return false;
     const p = this.engine.pickPlane(this.ndc(e).x, this.ndc(e).y, 0);
     if (!p) return false;
     if (this.room?.phase === 'safari') {
@@ -763,11 +860,12 @@ export class GameClient {
       tr.walkTo(p.x, p.z);
       this.carWalking = true;
     } else {
-      if (!this.trainer) return false;
+      const tr = this.trainers.get(this.myId);
+      if (!tr || tr.dropping || tr.mirror) return false;
       const d = Math.hypot(p.x, p.z);
       if (d > 13.2) { p.x *= 13.2 / d; p.z *= 13.2 / d; }
       this.send({ t: 'walk', x: p.x, z: p.z });
-      this.trainer.walkTo(p.x, p.z);
+      tr.walkTo(p.x, p.z);
       this.walkingLocal = true;
     }
     this.fx.ring(V3(p.x, 0, p.z), 0.9, 0x9be86a, 0.4, 0.2);
@@ -812,6 +910,35 @@ export class GameClient {
 
   planningViews() { return [...this.views.values()]; }
 
+  inspectPool() {
+    if (this.mode === 'combat') return [...this.cviews.values(), ...this.planningViews().filter((v) => v.onBench)];
+    if (this.room?.phase === 'safari') return [...this.sviews.values()];
+    return this.planningViews();
+  }
+
+  // Abre la ficha completa de la unidad de una vista.
+  inspect(v) {
+    if (!v || !this.room) return;
+    let u, owner = null;
+    const pub = (id) => this.room.players.find((p) => p.id === id);
+    if (v.unit) {
+      u = v.unit;
+      owner = v.own ? { ...pub(this.myId), ...this.me } : this.viewedPlayer();
+    } else {
+      u = { uid: v.uid, form: v.form, line: v.line || FORMS[v.form].line, star: v.star, shiny: v.shiny, items: v.items, fr: v.fr };
+      if (this.fight && v.id && this.cviews.get(v.id) === v) {
+        const side = v.enemy ? 1 - this.fight.mySide : this.fight.mySide;
+        const s = this.fight.sides[side];
+        owner = s && !s.pve ? pub(s.playerId) : null;
+        if (owner && owner.id === this.myId) owner = { ...owner, ...this.me };
+      }
+    }
+    if (!u?.form) return;
+    this.hud.hideTip();
+    sfx.play('click');
+    showUnitPanel(this.hud, { ...u, line: u.line || FORMS[u.form].line }, owner);
+  }
+
   canDrag(v) {
     if (!v || !v.own || !this.me?.alive) return false;
     const phase = this.room?.phase;
@@ -852,6 +979,9 @@ export class GameClient {
       this.hud.hideTip();
       return;
     }
+    // Pokémon que no se puede mover (rival, espiado o combatiendo): clic para ver su ficha.
+    const iv = this.pick(e, this.inspectPool());
+    if (iv) { this.pendingInspect = { x: e.clientX, y: e.clientY, v: iv }; return; }
     // Clic en el suelo vacío: el entrenador camina hasta allí.
     if (!v && e.pointerType !== 'mouse') this.walkTo(e);
     else if (!v) this.pendingWalk = { x: e.clientX, y: e.clientY, e };
@@ -929,6 +1059,12 @@ export class GameClient {
 
   pointerUp(e) {
     if (this.itemDrag) { this.endItemDrag(e); return; }
+    if (this.pendingInspect) {
+      const pi = this.pendingInspect;
+      this.pendingInspect = null;
+      if (Math.hypot(e.clientX - pi.x, e.clientY - pi.y) < 8) this.inspect(pi.v);
+      return;
+    }
     if (this.pendingWalk) {
       const pw = this.pendingWalk;
       this.pendingWalk = null;
@@ -941,7 +1077,8 @@ export class GameClient {
     this.arena.clearHighlights();
     d.v.dragging = false;
     if (!d.moved) {
-      // clic simple: nada (tooltip ya visible)
+      // Clic simple: ficha detallada.
+      this.inspect(d.v);
       return;
     }
     const t = d.target;
@@ -982,8 +1119,10 @@ export class GameClient {
     const g = this.itemDrag.ghost;
     g.style.left = e.clientX + 'px';
     g.style.top = e.clientY + 'px';
-    const v = this.pick(e, this.planningViews().filter((x) => x.own));
-    for (const x of this.views.values()) x.model.mat.emissive.setRGB(0, 0, 0);
+    // También se pueden dar objetos a tus Pokémon mientras combaten.
+    const fighters = this.fight && !this.scoutId ? [...this.cviews.values()].filter((x) => !x.enemy && !x.dead && x.uid) : [];
+    const v = this.pick(e, [...this.planningViews().filter((x) => x.own), ...fighters]);
+    for (const x of [...this.views.values(), ...this.cviews.values()]) x.model.mat.emissive.setRGB(0, 0, 0);
     this.itemDrag.over = v;
     if (v) v.model.mat.emissive.setRGB(0.25, 0.25, 0.1);
   }
@@ -1004,7 +1143,11 @@ export class GameClient {
     else if (k === 'e' && this.hover && this.canDrag(this.hover)) { this.send({ t: 'sell', uid: this.hover.uid }); sfx.play('sell'); this.hud.hideTip(); }
     else if (k === ' ') { e.preventDefault(); this.armDynamax(); }
     else if (k === 'enter') { e.preventDefault(); $('chat-input').focus(); }
-    else if (k === 'escape') { this.scout(null); this.hud.hideTip(); }
+    else if (k === 'escape') {
+      if (!$('modal').classList.contains('hidden') && !this.badgeOpen) this.hud.closeModal();
+      else this.scout(null);
+      this.hud.hideTip();
+    }
     else if (k >= '1' && k <= '5') this.send({ t: 'buy', slot: +k - 1 });
   }
 
@@ -1031,9 +1174,10 @@ export class GameClient {
     for (const v of this.views.values()) v.dispose();
     this.views.clear();
     this.refreshBoard();
-    this.trainer?.dispose();
-    this.trainer = null;
-    this.updateTrainer();
+    // Los entrenadores de la isla anterior desaparecen; los de la nueva aparecen (el tuyo llega de un salto).
+    for (const tr of this.trainers.values()) tr.dispose();
+    this.trainers.clear();
+    this.syncTrainers();
     for (const v of this.orbViews.values()) v.dispose(false);
     this.orbViews.clear();
     this.syncOrbs();
@@ -1064,7 +1208,7 @@ export class GameClient {
       for (const tr2 of this.carTrainers.values()) tr2.update(dt, t);
       if (!this._uiT || t - this._uiT > 0.25) { this._uiT = t; this.renderSafariUi(); }
     }
-    if (this.trainer) this.trainer.update(dt, t);
+    for (const tr of this.trainers.values()) tr.update(dt, t);
     for (const o of this.orbViews.values()) o.update(dt, t);
   }
 
@@ -1081,7 +1225,8 @@ export class GameClient {
     for (const v of this.cviews.values()) v.dispose();
     this.views.clear(); this.cviews.clear();
     this.clearSafari();
-    this.trainer?.dispose();
+    for (const tr of this.trainers.values()) tr.dispose();
+    this.trainers.clear();
     for (const o of this.orbViews.values()) o.dispose(false);
     this.hud.show(false);
     document.getElementById('recap')?.remove();

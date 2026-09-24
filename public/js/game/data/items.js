@@ -46,6 +46,7 @@ const FULL = [
 
 export const CONSUMABLES = {
   caramelo: { name: 'Caramelo Raro', icon: '🍬', color: '#6fb7ff', desc: 'Úsalo sobre un Pokémon para conseguir otra copia básica de su línea.', consumable: true },
+  iman: { name: 'Imán Extractor', icon: '🧲', color: '#e2574c', desc: 'Úsalo sobre un Pokémon para devolver todos sus objetos a la mochila. No funciona en Pokémon que están combatiendo.', consumable: true },
 };
 
 export const ITEMS = {};

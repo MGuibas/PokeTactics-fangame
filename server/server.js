@@ -1,6 +1,7 @@
 // Servidor: archivos estáticos + WebSocket con salas multijugador.
 import http from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, stat, readdir } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import { extname, join, normalize, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
@@ -15,18 +16,54 @@ const BOT_NAMES = ['Ash', 'Misty', 'Brock', 'Gary', 'Dawn', 'May', 'Serena', 'Cy
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2',
+  '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.opus': 'audio/ogg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.webm': 'audio/webm', '.flac': 'audio/flac',
+  '.txt': 'text/plain; charset=utf-8',
 };
+const AUDIO_EXT = /\.(ogg|mp3|m4a|wav|webm|opus|flac)$/i;
+
+// Índice de audio propio (public/audio/{music,sfx,cries}); se lee en cada petición para
+// poder añadir archivos sin reiniciar.
+async function audioIndex() {
+  const out = {};
+  for (const dir of ['music', 'sfx', 'cries']) {
+    const files = await readdir(join(ROOT, 'audio', dir)).catch(() => []);
+    out[dir] = files.filter((f) => AUDIO_EXT.test(f)).sort();
+  }
+  return out;
+}
 
 const server = http.createServer(async (req, res) => {
   try {
     let path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
     if (path === '/') path = '/index.html';
+    if (path === '/audio/index.json') {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
+      res.end(JSON.stringify(await audioIndex()));
+      return;
+    }
     const file = normalize(join(ROOT, path));
     if (!file.startsWith(ROOT)) { res.writeHead(403); res.end(); return; }
     const st = await stat(file).catch(() => null);
     if (!st || !st.isFile()) { res.writeHead(404); res.end('404'); return; }
+    const type = MIME[extname(file).toLowerCase()] || 'application/octet-stream';
+    // Audio: se sirve en streaming con soporte de rangos (necesario para música larga en bucle).
+    if (AUDIO_EXT.test(file)) {
+      const size = st.size;
+      const m = /bytes=(\d*)-(\d*)/.exec(req.headers.range || '');
+      if (m) {
+        const start = m[1] ? +m[1] : size - +m[2];
+        const end = m[1] && m[2] ? Math.min(+m[2], size - 1) : size - 1;
+        if (start >= size || start > end) { res.writeHead(416, { 'Content-Range': `bytes */${size}` }); res.end(); return; }
+        res.writeHead(206, { 'Content-Type': type, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Accept-Ranges': 'bytes', 'Content-Length': end - start + 1, 'Cache-Control': 'max-age=3600' });
+        createReadStream(file, { start, end }).pipe(res);
+      } else {
+        res.writeHead(200, { 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Content-Length': size, 'Cache-Control': 'max-age=3600' });
+        createReadStream(file).pipe(res);
+      }
+      return;
+    }
     const data = await readFile(file);
-    res.writeHead(200, { 'Content-Type': MIME[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
+    res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-cache' });
     res.end(data);
   } catch (e) {
     res.writeHead(500); res.end('500');

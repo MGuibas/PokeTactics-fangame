@@ -17,7 +17,7 @@ export const BADGES = {
   amuleto:   { name: 'Amuleto Moneda', icon: '🪙', kind: 'eco', desc: 'Ganas +2 de oro al inicio de cada ronda.' },
   bolsa:     { name: 'Bolsa de Pepitas', icon: '💰', kind: 'eco', desc: 'Recibes 18 de oro ahora mismo.' },
   caramelos: { name: 'Lluvia de Caramelos', icon: '🍬', kind: 'eco', desc: 'Recibes 2 Caramelos Raros.' },
-  maletin:   { name: 'Maletín del Profesor', icon: '🧳', kind: 'eco', desc: 'Recibes 3 componentes aleatorios.' },
+  maletin:   { name: 'Maletín del Profesor', icon: '🧳', kind: 'eco', desc: 'Recibes 3 componentes aleatorios y un Imán Extractor.' },
   mochila:   { name: 'Mochila Grande', icon: '🎒', kind: 'eco', desc: '+1 al tamaño máximo de tu equipo.' },
   estudio:   { name: 'Repartir Experiencia', icon: '📘', kind: 'eco', desc: 'Ganas +3 de experiencia cada ronda.' },
   descuento: { name: 'Tarjeta Socio', icon: '💳', kind: 'eco', desc: 'La primera actualización de tienda de cada ronda es gratis.' },

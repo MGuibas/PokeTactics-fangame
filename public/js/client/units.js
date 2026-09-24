@@ -5,6 +5,27 @@ import { ITEMS } from '../game/data/items.js';
 import { LINES, formScale } from '../game/data/pokemon.js';
 import { F } from '../game/combat.js';
 import { icon, itemIcon } from './icons.js';
+import { loreOf } from '../game/data/lore.js';
+
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+// Partículas de cada manía (ver lore.js).
+const QUIRK_FX = {
+  flame: (fx, u) => fx.rising(u.topPos().add(V(0, -0.2, 0)), 0xff7b2e, 6, 0.25),
+  spark: (fx, u) => { fx.burst(u.topPos(), 0xffe14a, 7, 2.2, 0.22, 0.3, 0); fx.sparkle(u.topPos(), 0xfff6a0, 3, 0.4); },
+  bubble: (fx, u) => fx.rising(u.topPos().add(V(0, -0.1, 0)), 0x9fd8ff, 5, 0.3),
+  leaf: (fx, u) => fx.burst(u.topPos(), 0x6fd35a, 6, 1.4, 0.26, 0.9, -1.2),
+  snow: (fx, u) => fx.sparkle(u.midPos(), 0xe8fbff, 7, 0.6),
+  shadow: (fx, u) => fx.burst(u.midPos(), 0x7a5bb3, 9, 1.2, 0.34, 0.7, 0.8),
+  sparkle: (fx, u) => fx.sparkle(u.midPos(), 0xffe0f6, 7, 0.6),
+  dust: (fx, u) => fx.burst(u.group.position.clone().add(V(0, 0.15, 0)), 0xc8a878, 8, 2, 0.3, 0.45, -3),
+  coin: (fx, u) => fx.sparkle(u.topPos(), 0xffcb05, 5, 0.4),
+  psy: (fx, u) => { fx.ring(u.group.position, 1.1, 0xff6aa8, 0.6, 0.2); fx.sparkle(u.topPos(), 0xff9ad0, 4, 0.4); },
+  wind: (fx, u) => fx.burst(u.group.position.clone().add(V(0, 0.3, 0)), 0xeaf2ff, 8, 2.6, 0.25, 0.4, 0),
+  steam: (fx, u) => fx.rising(u.group.position.clone().add(V(0, 0.2, 0)), 0xdddddd, 8, 0.6),
+  note: (fx, u) => fx.text(u.topPos().add(V(0, 0.3, 0)), '♪', 'note', 1.4, (Math.random() - 0.5) * 20),
+  heart: (fx, u) => fx.text(u.topPos().add(V(0, 0.3, 0)), '♥', 'note heart', 1.4, (Math.random() - 0.5) * 20),
+};
+const QUIRK_DUR = { hop: 0.9, spin: 0.8, shake: 0.7, flex: 1.0, nap: 2.2, blink: 1.0, flop: 1.2, roar: 1.0, dance: 1.4, look: 1.6, float: 1.6 };
 
 const shadowTex = (() => {
   const c = document.createElement('canvas');
@@ -69,7 +90,11 @@ export class UnitView {
   buildModel() {
     const sMul = formScale(this.line, this.star) * this.scaleMul * (this.boss ? 1.45 : 1);
     this.model = createModel(this.form, this.shiny, { scale: sMul });
+    this.model.root.traverse((o) => { if (o.isMesh && !o.material?.isShaderMaterial) o.castShadow = true; });
     this.group.add(this.model.root);
+    this.lore = loreOf(this.line, this.form);
+    this.shot = this.lore.shot;
+    this.quirkT = 2 + Math.random() * 7;
     this.baseScale = this.model.root.scale.x;
     this.height = this.model.height;
   }
@@ -237,6 +262,7 @@ export class UnitView {
     const root = this.model.root;
     const body = this.model.body;
     root.rotation.y = this.yaw;
+    root.rotation.z = 0;
 
     // Dinamax.
     this.dyna += (this.dynaTarget - this.dyna) * Math.min(1, dt * 3);
@@ -272,6 +298,7 @@ export class UnitView {
     if (this.flags & F.PARA && Math.random() < 0.3) body.position.x = (Math.random() - 0.5) * 0.06; else body.position.x = 0;
 
     // Acciones.
+    if (!this.model.root.visible && this.act?.kind !== 'q_blink') this.model.root.visible = true;
     const a = this.act;
     if (a) {
       a.t += dt;
@@ -315,6 +342,45 @@ export class UnitView {
           this.shadow.scale.multiplyScalar(1 - k);
           break;
         }
+        // ── Manías en reposo ──
+        case 'q_hop': body.position.y += Math.abs(Math.sin(k * Math.PI * 2)) * 0.3; break;
+        case 'q_spin': root.rotation.y = this.yaw + (1 - Math.pow(1 - k, 2)) * Math.PI * 2; body.position.y += Math.sin(k * Math.PI) * 0.2; break;
+        case 'q_shake': root.rotation.z = Math.sin(k * Math.PI * 8) * 0.16 * (1 - k); break;
+        case 'q_flex': {
+          const e = Math.sin(k * Math.PI);
+          body.scale.set(1 + e * 0.12, 1 - e * 0.07, 1 + e * 0.12);
+          if (rig.armL) rig.armL.rotation.z = e * 1.3;
+          if (rig.armR) rig.armR.rotation.z = -e * 1.3;
+          break;
+        }
+        case 'q_nap': {
+          const e = Math.sin(Math.min(1, k * 1.3) * Math.PI);
+          body.rotation.x = e * 0.28;
+          if (rig.head) rig.head.rotation.x = e * 0.35;
+          if (!a.z1 && k > 0.2) { a.z1 = true; this.ctx.fx.text(this.topPos(), 'z', 'txt small', 1.2, 12); }
+          if (!a.z2 && k > 0.55) { a.z2 = true; this.ctx.fx.text(this.topPos().add(V(0, 0.3, 0)), 'Z', 'txt small', 1.2, 20); }
+          break;
+        }
+        case 'q_blink': {
+          const hide = k > 0.3 && k < 0.62;
+          if (hide !== !this.model.root.visible) {
+            this.model.root.visible = !hide;
+            this.ctx.fx.burst(this.midPos(), 0x9a6ae0, 8, 1.5, 0.3, 0.4, 0);
+          }
+          break;
+        }
+        case 'q_flop': root.rotation.z = Math.sin(k * Math.PI * 6) * 0.5 * (1 - k * 0.5); body.position.y += Math.abs(Math.sin(k * Math.PI * 3)) * 0.35; break;
+        case 'q_roar': {
+          const e = Math.sin(Math.min(1, k * 1.6) * Math.PI);
+          body.rotation.x = -e * 0.25;
+          if (rig.head) rig.head.rotation.x = -e * 0.35;
+          root.scale.setScalar(sc * (1 + e * 0.07));
+          if (!a.ring && k > 0.25) { a.ring = true; this.ctx.fx.ring(this.group.position, 1.6, 0xffffff, 0.5, 0.2); }
+          break;
+        }
+        case 'q_dance': root.rotation.y = this.yaw + Math.sin(k * Math.PI * 4) * 0.6; body.position.y += Math.abs(Math.sin(k * Math.PI * 4)) * 0.15; break;
+        case 'q_look': root.rotation.y = this.yaw + Math.sin(k * Math.PI * 2) * 0.75; if (rig.head) rig.head.rotation.z = Math.sin(k * Math.PI * 2) * 0.15; break;
+        case 'q_float': body.position.y += Math.sin(k * Math.PI) * 0.35; root.rotation.y = this.yaw + Math.sin(k * Math.PI) * 0.4; break;
         case 'evolve': {
           // Destellos blancos alternando forma (como en los juegos).
           const pulse = Math.sin(a.t * (6 + a.t * 10)) * 0.5 + 0.5;
@@ -334,6 +400,11 @@ export class UnitView {
       }
     } else {
       root.position.set(0, 0, 0);
+      // Manía propia de cada Pokémon cuando está tranquilo.
+      if (!this.dead && !this.anim && !this.dragging && this.walkAmt < 0.05 && !(this.flags & (F.STUN | F.SLEEP | F.FREEZE)) && !this.noQuirk) {
+        this.quirkT -= dt;
+        if (this.quirkT <= 0) this.doQuirk();
+      }
     }
 
     // Destello de golpe / Dinamax.
@@ -366,6 +437,14 @@ export class UnitView {
       this.bar.style.transform = `translate(${s.x - 32}px, ${s.y - 30}px)`;
       this.bar.style.display = s.behind || this.hideBar ? 'none' : '';
     }
+  }
+
+  doQuirk() {
+    const q = this.lore?.quirk;
+    this.quirkT = (this.enemy || this.hp < this.maxHp ? 9 : 6) + Math.random() * 8;
+    if (!q || !this.group.visible) return;
+    this.act = { kind: 'q_' + q.act, t: 0, d: QUIRK_DUR[q.act] || 1 };
+    if (q.fx && QUIRK_FX[q.fx]) QUIRK_FX[q.fx](this.ctx.fx, this);
   }
 
   topPos() {

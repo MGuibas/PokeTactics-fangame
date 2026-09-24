@@ -6,7 +6,7 @@ const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=sw
 const page = await browser.newPage({ viewport: { width: +W, height: +H } });
 page.on('console', (m) => { if (m.type() === 'error' && !m.text().includes('CERT')) console.log('[console]', m.text()); });
 page.on('pageerror', (e) => console.log('[pageerror]', e.message, e.stack?.split('\n').slice(0, 3).join(' | ')));
-await page.goto(base + '?auto=solo', { waitUntil: 'domcontentloaded' });
+await page.goto(base + '?auto=solo&q=bajo', { waitUntil: 'domcontentloaded' });
 const g = (fn, a) => page.evaluate(fn, a);
 const phase = () => g(() => window.__pt3d.game?.room?.phase);
 const wait = async (ph, ms = 60000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await phase() === ph) return true; await page.waitForTimeout(150); } return false; };

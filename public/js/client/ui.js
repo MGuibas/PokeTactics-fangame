@@ -7,6 +7,8 @@ import { traitLevel } from '../game/traits.js';
 import { portrait } from './portraits.js';
 import { sfx } from './audio.js';
 import { icon, itemIcon, WEATHER_ICON, WEATHER_COLOR, BADGE_LOOK, EVENT_ICON } from './icons.js';
+import { showUnitPanel } from './panel.js';
+import { openSettings } from './settings.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -52,10 +54,7 @@ export class Hud {
     $('btn-lock').onclick = () => { g.send({ t: 'lock' }); sfx.play('click'); };
     $('btn-ready').onclick = () => g.toggleReady();
     $('btn-auto').onclick = () => { g.send({ t: 'autoplace' }); sfx.play('place'); };
-    const soundIcon = () => { $('btn-sound').querySelector('.bi').outerHTML = icon(sfx.enabled ? 'soundOn' : 'soundOff', 'bi'); };
-    $('btn-sound').onclick = () => { sfx.toggle(); soundIcon(); };
-    soundIcon();
-    $('btn-sound').oncontextmenu = (e) => { e.preventDefault(); sfx.toggleMusic(); this.toast(sfx.musicOn ? 'Música activada' : 'Música desactivada'); };
+    $('btn-settings').onclick = () => { sfx.play('click'); this.hideTip(); openSettings(g.engine); };
     $('btn-dex').onclick = () => this.showDex();
     $('btn-emote').onclick = () => $('emote-wheel').classList.toggle('hidden');
     $('emote-wheel').innerHTML = EMOTES.map((e) => `<button data-e="${e}">${e}</button>`).join('');
@@ -88,6 +87,27 @@ export class Hud {
       if (s) this.showFormTip({ line: s.line, form: formFor(s.line, 1), star: 1, shiny: s.shiny, items: [] }, e.clientX, e.clientY, true);
     });
     $('shop-cards').addEventListener('pointerleave', () => this.hideTip());
+    // Clic derecho (o pulsación larga) en una carta: ficha completa.
+    const openCard = (c) => {
+      const s = g.me?.shop?.[+c.dataset.slot];
+      if (!s) return;
+      this.hideTip();
+      showUnitPanel(this, { line: s.line, form: formFor(s.line, 1), star: 1, shiny: s.shiny, items: [] }, null);
+    };
+    $('shop-cards').addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const c = e.target.closest('.card');
+      if (c && !c.classList.contains('empty')) openCard(c);
+    });
+    let lp = null;
+    $('shop-cards').addEventListener('touchstart', (e) => {
+      const c = e.target.closest('.card');
+      if (!c || c.classList.contains('empty')) return;
+      clearTimeout(lp);
+      lp = setTimeout(() => { lp = 'done'; openCard(c); }, 550);
+    }, { passive: true });
+    $('shop-cards').addEventListener('touchend', (e) => { if (lp === 'done') e.preventDefault(); clearTimeout(lp); lp = null; });
+    $('shop-cards').addEventListener('touchmove', () => { clearTimeout(lp); lp = null; }, { passive: true });
     // Objetos: arrastrar hacia un Pokémon.
     $('items').addEventListener('pointerdown', (e) => {
       const it = e.target.closest('.slot');
@@ -224,8 +244,14 @@ export class Hud {
     if (this._shopKey === key) return;
     this._shopKey = key;
     const owned = {};
-    for (const u of [...me.board, ...me.bench.filter(Boolean)]) {
-      if (u.star === 1) owned[u.line] = (owned[u.line] || 0) + 1;
+    const have = {}; // línea -> { board, bench, star }
+    for (const [where, list] of [['board', me.board], ['bench', me.bench.filter(Boolean)]]) {
+      for (const u of list) {
+        if (u.star === 1) owned[u.line] = (owned[u.line] || 0) + 1;
+        const h = (have[u.line] ||= { board: 0, bench: 0, star: 0 });
+        h[where]++;
+        h.star = Math.max(h.star, u.star);
+      }
     }
     $('shop-cards').innerHTML = me.shop.map((s, i) => {
       if (!s) return `<div class="card empty" data-slot="${i}"></div>`;
@@ -235,10 +261,14 @@ export class Hud {
       const n = owned[s.line] || 0;
       const dots = n ? `<div class="own" title="Copias que tienes">${[0, 1].map((k) => `<b class="${k < n ? 'on' : ''}"></b>`).join('')}</div>` : '';
       const [b1, b2] = COST_BG[l.cost];
-      return `<div class="card ${cant ? 'cant' : ''} ${n >= 2 ? 'hot' : ''} ${s.shiny ? 'shiny' : ''}" data-slot="${i}" style="--cc:${COST_COLOR[l.cost]};--bg1:${b1};--bg2:${b2}">
+      // Marca de "ya lo tienes": verde si está en el tablero, azul si solo en el banquillo.
+      const h = have[s.line];
+      const where = h && [h.board ? `${h.board} en el tablero` : '', h.bench ? `${h.bench} en el banquillo` : ''].filter(Boolean).join(' y ');
+      const ownTag = h ? `<span class="owned-tag ${h.board ? 'board' : 'bench'}" title="Ya tienes ${where}">${icon('ball')}<b>${'★'.repeat(h.star)}</b></span>` : '';
+      return `<div class="card ${cant ? 'cant' : ''} ${n >= 2 ? 'hot' : ''} ${s.shiny ? 'shiny' : ''} ${h ? 'owned' : ''}" data-slot="${i}" style="--cc:${COST_COLOR[l.cost]};--bg1:${b1};--bg2:${b2}">
         <div class="por"><img src="${portrait(f.id, s.shiny)}" alt=""/>
           <div class="types">${[...f.types, f.role].map((t) => `<i style="--tc:${traitInfo(t).color}">${icon(t)}<span>${traitInfo(t).name}</span></i>`).join('')}</div>
-          ${s.shiny ? `<span class="shinytag">${icon('sparkle')}</span>` : ''}${dots}
+          ${s.shiny ? `<span class="shinytag">${icon('sparkle')}</span>` : ''}${ownTag}${dots}
           ${n >= 2 ? `<span class="evo-tag">${icon('up')}Evoluciona</span>` : ''}
         </div>
         <div class="bottom"><span class="nm">${esc(f.name)}</span><span class="cost">${coin()}${l.cost}</span></div>
@@ -351,7 +381,8 @@ export class Hud {
         <div class="move"><div class="mh">${traitBadge(m.type, 'sm')}<b>${esc(m.name)}</b></div>${moveDesc(f, u.star)}</div>
         ${f.passive === 'disfraz' ? '<div class="sub">Disfraz: bloquea el primer golpe recibido.</div>' : ''}
         ${items}
-        ${evoTxt ? `<div class="sub evo">${icon('up')}${evoTxt}${shop ? ' con 3 copias' : ''}</div>` : ''}`;
+        ${evoTxt ? `<div class="sub evo">${icon('up')}${evoTxt}${shop ? ' con 3 copias' : ''}</div>` : ''}
+        <div class="sub hint">${icon('info')}${shop ? 'Clic derecho: ficha completa' : 'Clic: ficha completa'}</div>`;
     }
     this.place(x, y);
   }

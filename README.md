@@ -33,8 +33,26 @@ O sin compose:
 
 ```bash
 docker build -t poketactics .
-docker run -d --name poketactics -p 8097:8097 --restart unless-stopped poketactics
+docker run -d --name poketactics -p 8097:8097 -v "$PWD/public/audio:/app/public/audio:ro" --restart unless-stopped poketactics
 ```
+
+### 🎵 Tu propia música, efectos y gritos
+
+El juego trae música y sonidos **sintetizados** (temas originales, efectos por tipo y un grito distinto para cada
+especie), pero puedes poner tus propios archivos en `public/audio/` y se usarán automáticamente, sin reiniciar
+(basta con recargar la página). Lo que no pongas se sigue sintetizando.
+
+```
+public/audio/music/planning.mp3     preparación          (también menu, safari, battle, battle-wild,
+public/audio/music/battle.mp3       combate PvP           battle-gym, raid, victory, defeat, evolution,
+public/audio/music/battle-2.mp3     variantes al azar     champion, gameover)
+public/audio/cries/25.ogg           grito por nº de Pokédex (25 = Pikachu, 6 = Charizard…)
+public/audio/sfx/buy.ogg            efectos: click, buy, sell, reroll, hit, crit, evolve, skill-fuego…
+```
+
+La lista completa de nombres y números está en [`public/audio/LEEME.txt`](public/audio/LEEME.txt). Estos archivos
+están en `.gitignore` (no se suben al repositorio) y `docker-compose.yml` ya monta la carpeta en el contenedor.
+En **Ajustes** (engranaje) ves cuántos archivos ha encontrado y puedes ajustar el volumen de música, efectos y gritos.
 
 ### Controles
 
@@ -47,11 +65,13 @@ docker run -d --name poketactics -p 8097:8097 --restart unless-stopped poketacti
 | Subir nivel | **F** |
 | Listo (acelera la ronda) | **W** |
 | Dinamax | **Espacio** y clic en tu Pokémon |
-| Equipar objeto | Arrástralo del panel de objetos a un Pokémon |
+| Equipar objeto | Arrástralo del panel de objetos a un Pokémon (¡también en pleno combate!) |
+| Quitar objetos | Usa un **Imán Extractor** sobre el Pokémon (fuera de combate) |
+| Ficha completa | Clic en un Pokémon (tuyo, rival o en combate); clic derecho en una carta de la tienda |
 | Mover a tu entrenador | **Clic derecho** en el suelo (en móvil, toca el suelo) |
-| Espiar a un rival | Clic en su nombre (Esc para volver) |
-| Chat / emotes | **Enter** / botón 😄 |
-| Música on/off | Clic derecho en 🔊 |
+| Visitar a un rival | Clic en su nombre: tu entrenador viaja a su isla (Esc para volver) |
+| Chat / emotes | **Enter** / botón Emote |
+| Gráficos y sonido | Botón **Ajustes** (calidad Alta/Media/Baja y volúmenes) |
 
 ---
 
@@ -82,6 +102,11 @@ docker run -d --name poketactics -p 8097:8097 --restart unless-stopped poketacti
 | 🪄 **Auto-colocar** | Rellena tu tablero con los mejores Pokémon del banquillo en un clic. |
 | 📊 **Resumen de daño** | Tras cada combate ves qué Pokémon ha hecho más daño. |
 | 🗣️ **Emotes y chat** | Tu entrenador reacciona a victorias y emotes. |
+| 🧳 **Visitas** | Al mirar la isla de otro jugador tu entrenador viaja allí de un salto y los demás le ven llegar. En los combates PvP se ven los dos entrenadores, cada uno en su lado. |
+| 🧲 **Objetos en combate e Imán Extractor** | Puedes dar objetos a tus Pokémon mientras luchan (el efecto es inmediato). El **Imán Extractor** devuelve a la mochila todos los objetos de un Pokémon (sale en gimnasios, en la Zona Safari y en el Maletín del Profesor). |
+| 📋 **Ficha de cada Pokémon** | Estadísticas por estrella y actuales (con objetos, sinergias, medallas y clima), habilidad en cada nivel, tabla de tipos, cadena evolutiva, objetos, amistad y su número de Pokédex. |
+| 🐾 **Cada Pokémon es único** | Personalidad y manía propias en reposo (Magikarp salpica, Snorlax ronca, Gastly se desvanece, Machop saca músculo…), proyectil propio (llamas, burbujas, hojas, shurikens de agua, rocas…), sonido de habilidad por tipo y un **grito** distinto por especie. |
+| 🛍️ **Marca en la tienda** | Las cartas de Pokémon que ya tienes llevan una Poké Ball verde (en el tablero) o azul (en el banquillo) con sus estrellas. |
 
 ---
 
@@ -110,7 +135,7 @@ public/
     combat.js             simulación de combate en tiempo real con semilla
     bot.js                IA de los entrenadores bot
     hex.js, traits.js     rejilla hexagonal y sinergias
-    data/                 Pokémon, tipos, objetos, clima, medallas…
+    data/                 Pokémon, tipos, objetos, clima, medallas, personalidad (lore.js)…
   js/client/              render y UI (three.js)
     engine.js             renderer, materiales toon + contorno en espacio de pantalla
     models.js, specs.js   constructor procedural de Pokémon y sus especificaciones
@@ -118,12 +143,16 @@ public/
     units.js, game.js     vistas de unidades, entrada, combate en vivo
     trainer.js            entrenador controlable y Poké Balls de botín
     icons.js              iconos SVG de la interfaz
-    ui.js, audio.js       HUD y sonido/música sintetizados (WebAudio)
+    ui.js, panel.js       HUD y ficha detallada de cada Pokémon
+    audio.js              música por situación, efectos y gritos (archivos propios o síntesis WebAudio)
+    settings.js           ajustes de calidad gráfica y volumen
 scripts/
   sim-test.js             simula partidas completas de 8 bots (npm run sim)
   play-test.mjs, shot.mjs pruebas visuales con Playwright
   carousel-test.mjs       carrusel, entrenador caminando y botín
-  mp-test.mjs             dos navegadores en la misma sala (y reconexión)
+  mp-test.mjs             dos navegadores en la misma sala (visitas y reconexión)
+  polish-test.mjs         ficha de Pokémon, visitas, objetos en combate, marca de la tienda
+  av-test.mjs, fx-test.mjs  audio (archivos propios y síntesis) y efectos con bloom
 ```
 
 - El servidor es **autoritativo**: los clientes solo envían intenciones (comprar, mover, Dinamax…) y reciben estado
@@ -138,6 +167,9 @@ scripts/
 - Estética **cel-shading**: `MeshToonMaterial` con rampa de 4 tonos, borde de luz (rim light) y contornos por
   extrusión de normales en espacio de pantalla (grosor constante en píxeles). Cada Pokémon se fusiona en pocas
   geometrías con colores por vértice para que dibujar 20+ criaturas sea barato.
+- Post-procesado (calidad Alta/Media): sombras toon del sol, MSAA, **bloom** solo para los efectos (que se pintan
+  en HDR), gradación de color con viñeta y motas de polen/luciérnagas que cambian con el clima. En Baja se
+  desactiva todo; si el equipo no llega a ~28 FPS el juego baja la calidad solo (se puede forzar con `?q=alto`).
 
 ### Probar el equilibrio y la interfaz
 

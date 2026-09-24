@@ -26,12 +26,14 @@ const DEX_MILESTONES = [
 ];
 
 // Movimiento del entrenador (coordenadas de mundo, 1 = radio de una casilla).
-export const AV_HOME = { x: -9.3, z: 4.4 };
+export const AV_HOME = { x: -7.5, z: 4.6 };
 export const AV_SPEED = 5.5;
 const WALK_R = 13.2;
 const ORB_R = 1.15;
 // Carrusel de la Zona Safari.
-export const CAROUSEL = { cx: 0, cz: 0.6, r: 3.5, rot: 0.3, pen: 9.4, speed: 5.2, grab: 1.05 };
+export const CAROUSEL = { cx: 0, cz: 0.6, r: 3.5, rot: 0.3, pen: 9.4, speed: 5.2, grab: 1.05, botSpeed: 0.62 };
+// Sitio donde aparecen los entrenadores que visitan una isla ajena.
+export const AV_VISIT = { x: 7.5, z: 4.6 };
 
 function clampCircle(x, z, r, cx = 0, cz = 0) {
   const dx = x - cx, dz = z - cz;
@@ -40,11 +42,11 @@ function clampCircle(x, z, r, cx = 0, cz = 0) {
   return [cx + (dx / d) * r, cz + (dz / d) * r];
 }
 
-function stepToward(a, dt) {
+function stepToward(a, dt, speed = AV_SPEED) {
   const dx = a.tx - a.x, dz = a.tz - a.z;
   const d = Math.hypot(dx, dz);
   if (d < 0.01) return false;
-  const st = (AV_SPEED * dt) / 1000;
+  const st = (speed * dt) / 1000;
   if (d <= st) { a.x = a.tx; a.z = a.tz; } else { a.x += (dx / d) * st; a.z += (dz / d) * st; }
   return true;
 }
@@ -345,11 +347,13 @@ export class GameRoom {
           let best = null, bd = 1e9;
           for (const o of p.orbs) { const d = Math.hypot(o.x - p.av.x, o.z - p.av.z); if (d < bd) { bd = d; best = o; } }
           p.av.tx = best.x; p.av.tz = best.z;
-        } else if (this.rng() < 0.004) {
-          [p.av.tx, p.av.tz] = clampCircle(AV_HOME.x + this.rng.range(-1.8, 1.8), AV_HOME.z + this.rng.range(-2.5, 2.5), WALK_R);
+        } else if (this.rng() < 0.004 || (Math.hypot(p.av.tx - AV_HOME.x, p.av.tz - AV_HOME.z) > 2.5 && this.rng() < 0.05)) {
+          // Deambula cerca de su sitio (y vuelve a él tras recoger el botín).
+          [p.av.tx, p.av.tz] = clampCircle(AV_HOME.x + this.rng.range(-0.5, 0.5), AV_HOME.z + this.rng.range(-1.6, 1.2), WALK_R);
         }
       }
       if (stepToward(p.av, dt)) p.avMoved = true;
+      if (p.scout) continue; // De visita no se recogen Poké Balls.
       for (let i = p.orbs.length - 1; i >= 0; i--) {
         const o = p.orbs[i];
         if (Math.hypot(o.x - p.av.x, o.z - p.av.z) < ORB_R) this.collectOrb(p, o);
@@ -362,7 +366,7 @@ export class GameRoom {
       for (const p of this.players) {
         if (!p.avMoved) continue;
         p.avMoved = false;
-        a.push([p.id, +p.av.x.toFixed(2), +p.av.z.toFixed(2), +p.av.tx.toFixed(2), +p.av.tz.toFixed(2)]);
+        a.push([p.id, +p.av.x.toFixed(2), +p.av.z.toFixed(2), +p.av.tx.toFixed(2), +p.av.tz.toFixed(2), p.scout || p.id]);
       }
       if (a.length) this.broadcast({ t: 'avs', a });
     }
@@ -603,6 +607,13 @@ export class GameRoom {
     return null;
   }
 
+  // Pokémon de p que ahora mismo está luchando en su tablero (y el combate en el que está).
+  fightingEntry(p, u) {
+    if (this.phase !== 'combat' || !p.board.includes(u)) return null;
+    const e = this.combatOf(p.id);
+    return e && !e.ended ? e : null;
+  }
+
   equip(p, idx, uidv) {
     const it = p.items[idx];
     const u = p.find(uidv);
@@ -625,26 +636,39 @@ export class GameRoom {
       p.dirty = true;
       return true;
     }
+    const fight = this.fightingEntry(p, u);
+    if (it === 'iman') {
+      if (!u.items.length) { this.fx(p, { kind: 'toast', text: 'Ese Pokémon no lleva objetos.' }); return false; }
+      if (fight) { this.fx(p, { kind: 'toast', text: 'No puedes quitar objetos a un Pokémon que está combatiendo.' }); return false; }
+      if (p.items.length - 1 + u.items.length > MAX_ITEMS + 4) { this.fx(p, { kind: 'toast', text: 'No te caben más objetos en la mochila.' }); return false; }
+      p.items.splice(idx, 1);
+      const back = u.items.splice(0);
+      for (const b of back) this.giveItem(p, b);
+      this.fx(p, { kind: 'unequip', uid: u.uid, items: back });
+      p.dirty = true; this.roomDirty = true;
+      return true;
+    }
+    const done = (item) => {
+      p.items.splice(idx, 1);
+      this.fx(p, { kind: 'item', uid: u.uid, item });
+      // Objetos en pleno combate: el Pokémon los recibe al instante.
+      if (fight) fight.combat.equipLive(fight.home === p.id ? 0 : 1, u.uid, u.items);
+      p.dirty = true; this.roomDirty = true;
+      return true;
+    };
     if (def.component && u.items.length) {
       const last = u.items[u.items.length - 1];
       if (ITEMS[last]?.component) {
         const full = combine(last, it);
         if (full) {
           u.items[u.items.length - 1] = full;
-          p.items.splice(idx, 1);
-          this.fx(p, { kind: 'item', uid: u.uid, item: full });
-          p.dirty = true; this.roomDirty = true;
-          return true;
+          return done(full);
         }
       }
     }
     if (u.items.length >= 3) { this.fx(p, { kind: 'toast', text: 'Máximo 3 objetos por Pokémon.' }); return false; }
     u.items.push(it);
-    p.items.splice(idx, 1);
-    this.fx(p, { kind: 'item', uid: u.uid, item: it });
-    p.dirty = true;
-    this.roomDirty = true;
-    return true;
+    return done(it);
   }
 
   // ───────────────────────── Evoluciones ─────────────────────────
@@ -740,7 +764,7 @@ export class GameRoom {
     switch (id) {
       case 'bolsa': p.gold += 18; break;
       case 'caramelos': this.giveItem(p, 'caramelo'); this.giveItem(p, 'caramelo'); break;
-      case 'maletin': for (let i = 0; i < 3; i++) this.giveItem(p, this.rng.pick(COMPONENTS)); break;
+      case 'maletin': for (let i = 0; i < 3; i++) this.giveItem(p, this.rng.pick(COMPONENTS)); this.giveItem(p, 'iman'); break;
       case 'ultraball': p.gold += 6; break;
       case 'emblema': {
         const t = this.rng.pick(Object.keys(TYPES));
@@ -946,9 +970,22 @@ export class GameRoom {
   }
 
   setScout(p, target) {
-    if (target === p.id) target = null;
+    if (target === p.id || (target && !this.getPlayer(target))) target = null;
+    if ((p.scout || null) === target) return;
+    // El entrenador viaja a la isla que miras (y vuelve a donde estaba al regresar).
+    if (!p.scout) p.avSaved = { x: p.av.x, z: p.av.z };
+    if (target) {
+      const n = this.players.filter((q) => q !== p && q.scout === target).length;
+      const x = AV_VISIT.x - Math.floor(n / 3) * 1.1, z = AV_VISIT.z - (n % 3) * 1.15;
+      Object.assign(p.av, { x, z, tx: x, tz: z });
+    } else {
+      const h = p.avSaved || AV_HOME;
+      Object.assign(p.av, { x: h.x, z: h.z, tx: h.x, tz: h.z });
+    }
     p.scout = target;
+    p.avMoved = true;
     p.dirty = true;
+    this.roomDirty = true;
     if (this.phase === 'combat') {
       const e = target ? this.combatOf(target) : this.combatOf(p.id);
       if (e) this.sendCombatInit(e, p.id);
@@ -1071,6 +1108,7 @@ export class GameRoom {
       drop({ gold: 3 });
       loot.items = n; loot.gold = 3;
       if (this.stage >= 3) { drop({ items: ['caramelo'] }); loot.caramelo = 1; }
+      drop({ items: ['iman'] });
     } else if (lu.kind === 'raid') {
       const line = lu.units[0].line;
       const u = this.makeUnit(line, 1, this.rng() < 0.2);
@@ -1158,6 +1196,7 @@ export class GameRoom {
       const line = this.rng.pick(cands.length ? cands : LINES_BY_COST[1]);
       let item = this.rng.pick(COMPONENTS);
       if (this.stage >= 4 && this.rng() < 0.3) item = this.rng() < 0.5 ? 'caramelo' : this.rng.pick(FULL_ITEMS);
+      else if (this.stage >= 2 && this.rng() < 0.12) item = 'iman';
       options.push({ id: 's' + i, a: +((i / n) * Math.PI * 2).toFixed(4), line, form: formFor(line, 1), shiny: this.rng() < this.shinyChance(alive[0] || {}) * 1.5, item, takenBy: null });
     }
     const order = this.stage === 1 ? this.rng.shuffle([...alive]) : [...alive].sort((a, b) => a.hp - b.hp || this.rng() - 0.5);
@@ -1171,7 +1210,9 @@ export class GameRoom {
       const wave = this.stage === 1 ? 0 : Math.floor(i / 2);
       const rel = this.time + intro + wave * gap;
       lastRel = Math.max(lastRel, rel);
-      avs[p.id] = { x, z, tx: x, tz: z, rel, hold: null, want: null, wave };
+      // Los bots tardan un poco en reaccionar al abrirse la barrera.
+      const react = p.isAi ? (fast ? 0 : 500 + this.rng.int(900)) : 0;
+      avs[p.id] = { x, z, tx: x, tz: z, rel, react, hold: null, want: null, wave };
     });
     this.safari = { options, order: order.map((p) => p.id), avs, rot: 0, assignAt: lastRel + (fast ? 200 : 6500), endAt: 0 };
     this.phase = 'safari';
@@ -1201,14 +1242,14 @@ export class GameRoom {
       const p = this.getPlayer(pid);
       const a = s.avs[pid];
       if (!p || !p.alive || !a) continue;
-      if (this.time < a.rel) continue;
+      if (this.time < a.rel + (a.react || 0)) continue;
       if (!a.hold) {
         if (p.isAi && (!a.want || s.options.find((o) => o.id === a.want)?.takenBy)) a.want = botSafari(this, p);
         const w = a.want && s.options.find((o) => o.id === a.want && !o.takenBy);
         if (w) [a.tx, a.tz] = this.carouselPos(w);
         else if (a.want) a.want = null;
       }
-      stepToward(a, dt);
+      stepToward(a, dt, p.isAi && !a.hold ? AV_SPEED * CAROUSEL.botSpeed : AV_SPEED);
       if (!a.hold) {
         for (const o of s.options) {
           if (o.takenBy) continue;
@@ -1286,7 +1327,7 @@ export class GameRoom {
         id: p.id, name: p.name, avatar: p.avatar, hp: p.hp, level: p.level, gold: p.gold, streak: p.streak,
         alive: p.alive, place: p.place, isBot: p.isBot, connected: p.connected, ready: p.ready,
         fightId: p.fightId, badges: p.badges,
-        av: [+p.av.x.toFixed(2), +p.av.z.toFixed(2), +p.av.tx.toFixed(2), +p.av.tz.toFixed(2)],
+        av: [+p.av.x.toFixed(2), +p.av.z.toFixed(2), +p.av.tx.toFixed(2), +p.av.tz.toFixed(2), p.scout || p.id],
         orbs: p.orbs.map((o) => ({ id: o.id, x: o.x, z: o.z, gold: o.gold, n: o.items.length, rare: o.items.some((it) => !COMPONENTS.includes(it)) })),
         board: p.board.map((u) => ({ uid: u.uid, line: u.line, form: u.form, star: u.star, shiny: u.shiny, x: u.x, y: u.y, items: u.items, fr: u.fr })),
         bench: p.bench.map((u) => (u ? { uid: u.uid, line: u.line, form: u.form, star: u.star, shiny: u.shiny, items: u.items } : null)),

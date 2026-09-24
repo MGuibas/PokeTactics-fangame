@@ -8,6 +8,7 @@ import { GameClient } from './game.js';
 import { WsTransport, LocalTransport } from './net.js';
 import { portrait } from './portraits.js';
 import { sfx } from './audio.js';
+import { openSettings } from './settings.js';
 import { AVATARS } from '../game/room.js';
 import { FORMS, LINE_LIST } from '../game/data/pokemon.js';
 import { WEATHER_IDS } from '../game/data/world.js';
@@ -99,6 +100,10 @@ $('name-input').value = prefs.name;
 $('btn-solo').onclick = () => { sfx.unlock(); startSolo(); };
 $('btn-multi').onclick = () => { sfx.unlock(); openLobby(); };
 $('btn-help').onclick = () => { sfx.unlock(); showScreen('help'); };
+$('btn-menu-settings').onclick = () => { sfx.unlock(); openSettings(engine); };
+// El audio del navegador solo arranca tras una interacción.
+window.addEventListener('pointerdown', () => sfx.unlock(), { passive: true });
+window.addEventListener('keydown', () => sfx.unlock());
 document.querySelectorAll('[data-back]').forEach((b) => (b.onclick = () => { leaveLobby(); showScreen('menu'); }));
 
 // ───────── Partida ─────────
@@ -116,6 +121,7 @@ function startGame(net, myId, solo) {
       if (!solo) { ws = null; }
       startMenuScene();
       showScreen('menu');
+      sfx.setMood('menu');
     },
   });
 }

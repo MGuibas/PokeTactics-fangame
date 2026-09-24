@@ -2,3 +2,11 @@ node_modules/
 public/vendor/
 *.log
 .DS_Store
+# Audio propio (no se sube al repositorio)
+public/audio/**/*.mp3
+public/audio/**/*.ogg
+public/audio/**/*.opus
+public/audio/**/*.m4a
+public/audio/**/*.wav
+public/audio/**/*.webm
+public/audio/**/*.flac

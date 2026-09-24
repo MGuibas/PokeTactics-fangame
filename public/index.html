@@ -7,7 +7,7 @@
   <meta name="description" content="Auto-battler multijugador estilo TFT con Pokémon en 3D cel-shading." />
   <link rel="stylesheet" href="css/style.css" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='46' fill='%23e3350d' stroke='%23222' stroke-width='8'/><rect x='4' y='46' width='92' height='8' fill='%23222'/><path d='M4 54 A46 46 0 0 0 96 54Z' fill='%23fff'/><circle cx='50' cy='50' r='14' fill='%23fff' stroke='%23222' stroke-width='8'/></svg>" />
-  <script type="importmap">{ "imports": { "three": "./vendor/three/three.module.js" } }</script>
+  <script type="importmap">{ "imports": { "three": "./vendor/three/three.module.js", "three/addons/": "./vendor/three/addons/" } }</script>
 </head>
 <body>
   <canvas id="scene"></canvas>
@@ -34,6 +34,7 @@
         <button id="btn-solo" class="btn big primary"><span data-icon="ball"></span>Jugar contra bots</button>
         <button id="btn-multi" class="btn big secondary"><span data-icon="swords"></span>Multijugador</button>
         <button id="btn-help" class="btn ghost"><span data-icon="book"></span>Cómo se juega</button>
+        <button id="btn-menu-settings" class="btn ghost"><span data-icon="gear"></span>Ajustes</button>
       </div>
       <p class="fineprint">Proyecto fan sin ánimo de lucro. Pokémon es marca de Nintendo, Game Freak y Creatures.</p>
     </div>
@@ -112,7 +113,7 @@
       <button id="btn-auto" class="btn round" title="Colocar automáticamente"><span class="bi" data-icon="wand"></span><span>Auto</span></button>
       <button id="btn-dex" class="btn round" title="Pokédex y medallas"><span class="bi" data-icon="book"></span><span id="dex-count">0</span></button>
       <button id="btn-emote" class="btn round" title="Emotes"><span class="bi" data-icon="smile"></span><span>Emote</span></button>
-      <button id="btn-sound" class="btn round" title="Sonido (clic derecho: música)"><span class="bi" data-icon="soundOn"></span><span>Sonido</span></button>
+      <button id="btn-settings" class="btn round" title="Ajustes: gráficos y sonido"><span class="bi" data-icon="gear"></span><span>Ajustes</span></button>
     </div>
     <div id="emote-wheel" class="hidden"></div>
     <div id="dyna-wrap" class="hidden"><button id="btn-dyna" class="btn dyna">DINAMAX<small id="dyna-sub"></small></button></div>

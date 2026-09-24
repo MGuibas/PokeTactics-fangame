@@ -1,0 +1,60 @@
+AUDIO PROPIO DE POKÉTACTICS 3D
+==============================
+
+Pon aquí tus archivos de audio y el juego los usará automáticamente (no hace falta
+reiniciar el servidor; basta con recargar la página). Todo lo que falte se sintetiza.
+Formatos: .ogg, .mp3, .m4a, .wav, .opus, .webm o .flac
+
+Estos archivos NO se suben al repositorio (están en .gitignore).
+
+
+MÚSICA  ->  public/audio/music/<situación>.mp3
+-------------------------------------------------
+  menu.mp3          Menú principal y sala de espera
+  planning.mp3      Fase de preparación (tienda y tablero)
+  safari.mp3        Zona Safari (carrusel)           [si falta: planning]
+  battle.mp3        Combate contra otro entrenador
+  battle-wild.mp3   Combate contra Pokémon salvajes   [si falta: battle]
+  battle-gym.mp3    Líderes de gimnasio y Alto Mando  [si falta: battle]
+  raid.mp3          Incursión Dinamax (jefe final)    [si falta: battle-gym]
+  victory.mp3       Fanfarria al ganar una ronda (corta, no se repite)
+  defeat.mp3        Fanfarria al perder una ronda (corta)
+  evolution.mp3     Fanfarria de evolución (corta)
+  champion.mp3      Final: has quedado 1º            [si falta: victory]
+  gameover.mp3      Final: eliminado                 [si falta: defeat]
+
+  Puedes poner varias versiones de una misma situación y se elegirá una al azar:
+  battle-1.mp3, battle-2.mp3, battle-3.mp3 ...
+
+
+GRITOS  ->  public/audio/cries/<número de Pokédex nacional>.ogg
+-----------------------------------------------------------------
+  Ejemplos: 25.ogg (Pikachu), 6.ogg (Charizard), 150.ogg (Mewtwo), 0445.ogg (Garchomp).
+  Los ceros a la izquierda dan igual. Las formas Mega/Gigamax/Primigenias usan el
+  número de su especie (con el tono un poco más grave).
+  Números que usa el juego:
+    1 2 3 4 5 6 7 8 9 16 17 18 25 26 35 36 52 53 56 57 58 59 60 61 62 63 64 65 66 67 68
+    74 75 76 81 82 92 93 94 111 112 123 129 130 131 133 134 135 136 142 143 144 145 147
+    148 149 150 152 153 154 155 156 157 158 159 160 172 173 175 176 179 180 181 196 197
+    212 215 220 221 228 229 246 247 248 252 253 254 280 281 282 328 329 330 355 356 361
+    374 375 376 382 383 384 443 444 445 446 447 448 459 460 461 462 464 468 470 471 473
+    477 478 656 657 658 700 778 979
+
+
+EFECTOS  ->  public/audio/sfx/<nombre>.ogg
+--------------------------------------------
+  Interfaz:  click, buy, sell, reroll, level, error, place, pickup, equip, magnet, coin,
+             badge, round, tick
+  Partida:   fight, evolve, win, lose, land, throw, shake, caught, escape, shiny,
+             ballopen, dyna, quake
+  Combate:   hit, crit, se (súper eficaz), shot, cast, blast, die, heal, shield, splash, zap
+  Habilidades por tipo (opcional): skill-fuego, skill-agua, skill-planta, skill-electrico,
+             skill-hielo, skill-lucha, skill-tierra, skill-roca, skill-volador,
+             skill-psiquico, skill-fantasma, skill-dragon, skill-siniestro, skill-acero,
+             skill-hada, skill-normal
+
+
+CON DOCKER
+----------
+  docker-compose.yml ya monta esta carpeta (./public/audio) dentro del contenedor,
+  así que basta con copiar los archivos aquí y recargar la página.

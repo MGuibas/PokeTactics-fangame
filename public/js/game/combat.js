@@ -68,121 +68,49 @@ export class Combat {
   // ───────────────────────── Construcción de unidades ─────────────────────────
   addUnit(src, side, tl, badges, isBoss) {
     const form = FORMS[src.form];
-    const line = LINES[src.line];
-    const b = baseStats(src.line, src.form, src.star);
-    const types = form.types;
-    const role = form.role;
-    const has = (t) => types.includes(t) || role === t;
-    const items = (src.items || []).filter((i) => ITEMS[i] && !ITEMS[i].consumable);
-    const itemSet = new Set(items);
-
-    let hpFlat = 0, hpPct = 0, atkPct = 0, asPct = 0, ap = 0, def = 0, mdef = 0, mana0 = 0;
-    let crit = 0, critDmg = 0, dodge = 0, range = 0, dmgAmp = 0, dmgRed = 0, vamp = 0;
-
-    for (const it of items) {
-      const s = ITEMS[it].stats || {};
-      hpFlat += s.hp || 0; atkPct += s.atkPct || 0; asPct += s.asPct || 0; ap += s.ap || 0;
-      def += s.def || 0; mdef += s.mdef || 0; mana0 += s.mana0 || 0; crit += s.crit || 0;
-      dodge += s.dodge || 0; range += s.range || 0; dmgAmp += s.dmgAmp || 0; vamp += s.vamp || 0;
-    }
-    if (itemSet.has('bolaluminosa')) {
-      if (src.line === 'pichu') { atkPct += 1; ap += 100; } else { atkPct += 0.2; ap += 20; }
-    }
-
-    // Shiny y amistad.
-    if (src.shiny) {
-      const m = badges.includes('iris') ? 0.25 : 0.15;
-      hpPct += m; atkPct += m; ap += 15;
-    }
-    if ((src.fr || 0) >= 5) {
-      const m = badges.includes('amistad') ? 0.2 : 0.1;
-      hpPct += m; atkPct += m; ap += m * 100;
-    }
-
-    // Sinergias.
-    const L = (id) => tl[id] || 0;
-    const lv = (id, arr) => (L(id) ? arr[L(id) - 1] : 0);
-    if (has('normal') && L('normal')) { hpPct += lv('normal', [0.2, 0.45]); atkPct += lv('normal', [0.2, 0.45]); }
-    if (has('fuego') && L('fuego')) dmgAmp += lv('fuego', [0.1, 0.3]);
-    if (has('lucha') && L('lucha')) { atkPct += lv('lucha', [0.2, 0.45]); vamp += lv('lucha', [0.1, 0.2]); }
-    if (has('tierra')) def += lv('tierra', [20, 40, 70]);
-    if (has('volador') && L('volador')) { dodge += lv('volador', [0.1, 0.2, 0.35]); asPct += lv('volador', [0.1, 0.2, 0.35]); }
-    ap += lv('psiquico', [15, 40]);
-    if (has('psiquico')) ap += lv('psiquico', [15, 30]);
-    if (has('fantasma')) dodge += lv('fantasma', [0.2, 0.35]);
-    if (has('dragon') && L('dragon')) { hpFlat += lv('dragon', [300, 650]); dmgAmp += lv('dragon', [0.15, 0.35]); }
-    if (has('siniestro') && L('siniestro')) { crit += lv('siniestro', [0.25, 0.45]); critDmg += lv('siniestro', [0.2, 0.4]); }
-    if (has('acero')) dmgRed += lv('acero', [0.15, 0.32]);
-    mdef += lv('hada', [20, 45]);
-    if (has('defensor')) { def += lv('defensor', [20, 45, 80]); mdef += lv('defensor', [20, 45, 80]); }
-    if (L('defensor') >= 3 && !has('defensor')) { def += 20; mdef += 20; }
-    if (has('atacante')) atkPct += lv('atacante', [0.15, 0.35, 0.6]);
-    if (has('veloz')) asPct += lv('veloz', [0.15, 0.35, 0.6]);
-    if (has('tirador') && L('tirador')) { range += 1; dmgAmp += lv('tirador', [0.15, 0.35]); }
-    if (has('mistico')) { ap += lv('mistico', [25, 60, 100]); mana0 += lv('mistico', [0, 10, 20]); }
-    if (L('mistico') >= 3 && !has('mistico')) ap += 25;
-
-    // Medallas.
-    if (badges.includes('roca')) { def += 25; mdef += 25; }
-    if (badges.includes('cascada')) mana0 += 25;
-    if (badges.includes('trueno')) asPct += 0.2;
-    if (badges.includes('alma')) ap += 30;
-    if (badges.includes('pantano')) dmgAmp += 0.15;
-    if (badges.includes('tierra')) hpFlat += 250;
-
-    // Clima.
-    const w = this.weather;
-    if (w === 'lluvia' && has('electrico')) asPct += 0.2;
-    if (w === 'arena' && (has('roca') || has('tierra') || has('acero'))) { def += 25; mdef += 25; }
-    if (w === 'nieve') { if (has('hielo')) def += 20; else asPct -= 0.1; }
-    if (w === 'niebla' && (has('hada') || has('psiquico'))) ap += 30;
-
-    let maxHp = Math.round((b.hp + hpFlat) * (1 + hpPct));
-    let atk = b.atk * (1 + atkPct);
-    if (this.kind === 'pve' && side === 1) {
-      maxHp = Math.round(maxHp * 0.6);
-      atk *= 0.6;
-    }
-    if (isBoss) {
-      const mul = 2.2 + this.stage * 0.9;
-      maxHp = Math.round(maxHp * mul);
-      atk *= 1 + this.stage * 0.12;
-    }
-
+    const st = computeStats(src, { tl, badges, weather: this.weather, stage: this.stage, weak: this.kind === 'pve' && side === 1, boss: isBoss });
     const u = {
       id: 'c' + this.nextId++, side, owner: this.sides[side].playerId,
-      uid: src.uid, line: src.line, form: src.form, star: src.star, shiny: !!src.shiny, items, itemSet,
-      types, role, x: src.x, y: src.y, fr: src.fr || 0,
-      maxHp, hp: maxHp, atk, baseAs: b.as, asPct, ap: 100 + ap,
-      def: b.def + def, mdef: b.mdef + mdef, range: b.range + range,
-      mana: Math.min(b.mana - 1, b.mana0 + mana0), maxMana: b.mana,
-      crit: Math.min(1, b.crit + crit), critDmg: b.critDmg + critDmg, dodge: Math.min(0.6, dodge),
-      dmgAmp, dmgRed: Math.min(0.6, dmgRed), vamp,
+      uid: src.uid, line: src.line, form: src.form, star: src.star, shiny: !!src.shiny,
+      types: form.types, role: form.role, x: src.x, y: src.y, fr: src.fr || 0,
+      src: { ...src }, tl, badges,
+      ...st,
+      hp: st.maxHp,
+      mana: Math.min(st.maxMana - 1, st.mana0),
       shields: [], buffs: [],
       alive: true, target: null, nextAtk: 250 + this.rng.int(350), busyUntil: 0, retargetAt: 0,
       stunUntil: 0, stunKind: null, burn: null, slowUntil: 0, slowPct: 0, confUntil: 0, invulnUntil: 0,
       shredUntil: 0, antiHealUntil: 0,
-      moveMs: itemSet.has('panueloelegido') ? MOVE_MS / 2 : MOVE_MS,
       stacks: { metro: 0, aguante: 0 }, casts: 0, focusUsed: false, zidraUsed: false, alivioUsed: false,
       disguise: form.passive === 'disfraz',
       dyna: false, dynaUntil: 0, dynaBonus: 0, boss: isBoss,
       dmgDone: 0, dmgTaken: 0, healDone: 0,
-      cc: !itemSet.has('hierbamental'),
-      fireBurn: has('fuego') ? lv('fuego', [0.02, 0.035]) : 0,
-      waterRegen: has('agua') ? lv('agua', [3, 6, 10]) : 0,
-      badges,
     };
-    if (L('agua') >= 3 && !has('agua')) u.waterRegen += 3;
-    if (w === 'sol' && has('planta')) u.waterRegen += 3;
-    u.elecLv = has('electrico') ? L('electrico') : 0;
-    u.iceLv = has('hielo') ? L('hielo') : (L('hielo') >= 3 ? 1 : 0);
-    u.fairyHeal = has('hada') ? lv('hada', [0.2, 0.4]) : 0;
-    u.ghostConfuse = has('fantasma') && L('fantasma') >= 2;
-    u.volcan = badges.includes('volcan');
     if (isBoss) { u.dyna = true; u.dynaUntil = 1e12; u.cc = false; }
     this.units.push(u);
     this.grid.set(key(u.x, u.y), u);
     return u;
+  }
+
+  // Equipar un objeto a mitad de combate: recalcula y aplica la diferencia.
+  equipLive(side, uid, items) {
+    const u = this.units.find((x) => x.side === side && x.uid === uid && x.alive);
+    if (!u || this.done) return false;
+    const before = computeStats(u.src, { tl: u.tl, badges: u.badges, weather: this.weather, stage: this.stage });
+    u.src.items = [...items];
+    const after = computeStats(u.src, { tl: u.tl, badges: u.badges, weather: this.weather, stage: this.stage });
+    const dHp = after.maxHp - before.maxHp;
+    u.maxHp += dHp;
+    if (dHp > 0) u.hp += dHp;
+    u.hp = Math.min(u.hp, u.maxHp);
+    for (const k of ['atk', 'asPct', 'ap', 'def', 'mdef', 'range', 'crit', 'critDmg', 'dodge', 'dmgAmp', 'dmgRed', 'vamp']) u[k] += after[k] - before[k];
+    u.mana = Math.min(u.maxMana - 1, u.mana + Math.max(0, after.mana0 - before.mana0));
+    u.items = after.items;
+    u.itemSet = after.itemSet;
+    u.cc = after.cc && !u.boss;
+    u.moveMs = after.moveMs;
+    this.ev({ k: 'item', u: u.id, items: u.items });
+    return true;
   }
 
   onStart() {
@@ -956,6 +884,96 @@ export class Combat {
       time: this.t,
     };
   }
+}
+
+// Estadísticas finales de una unidad (objetos, shiny, amistad, sinergias, medallas y clima).
+// tl = niveles de sinergia activos { tipo: nivel }.
+export function computeStats(src, { tl = {}, badges = [], weather = 'despejado', stage = 1, weak = false, boss = false } = {}) {
+  const form = FORMS[src.form];
+  const b = baseStats(src.line, src.form, src.star);
+  const types = form.types;
+  const role = form.role;
+  const has = (t) => types.includes(t) || role === t;
+  const items = (src.items || []).filter((i) => ITEMS[i] && !ITEMS[i].consumable);
+  const itemSet = new Set(items);
+
+  let hpFlat = 0, hpPct = 0, atkPct = 0, asPct = 0, ap = 0, def = 0, mdef = 0, mana0 = 0;
+  let crit = 0, critDmg = 0, dodge = 0, range = 0, dmgAmp = 0, dmgRed = 0, vamp = 0;
+
+  for (const it of items) {
+    const s = ITEMS[it].stats || {};
+    hpFlat += s.hp || 0; atkPct += s.atkPct || 0; asPct += s.asPct || 0; ap += s.ap || 0;
+    def += s.def || 0; mdef += s.mdef || 0; mana0 += s.mana0 || 0; crit += s.crit || 0;
+    dodge += s.dodge || 0; range += s.range || 0; dmgAmp += s.dmgAmp || 0; vamp += s.vamp || 0;
+  }
+  if (itemSet.has('bolaluminosa')) {
+    if (src.line === 'pichu') { atkPct += 1; ap += 100; } else { atkPct += 0.2; ap += 20; }
+  }
+  if (src.shiny) {
+    const m = badges.includes('iris') ? 0.25 : 0.15;
+    hpPct += m; atkPct += m; ap += 15;
+  }
+  if ((src.fr || 0) >= 5) {
+    const m = badges.includes('amistad') ? 0.2 : 0.1;
+    hpPct += m; atkPct += m; ap += m * 100;
+  }
+  const L = (id) => tl[id] || 0;
+  const lv = (id, arr) => (L(id) ? arr[L(id) - 1] : 0);
+  if (has('normal') && L('normal')) { hpPct += lv('normal', [0.2, 0.45]); atkPct += lv('normal', [0.2, 0.45]); }
+  if (has('fuego') && L('fuego')) dmgAmp += lv('fuego', [0.1, 0.3]);
+  if (has('lucha') && L('lucha')) { atkPct += lv('lucha', [0.2, 0.45]); vamp += lv('lucha', [0.1, 0.2]); }
+  if (has('tierra')) def += lv('tierra', [20, 40, 70]);
+  if (has('volador') && L('volador')) { dodge += lv('volador', [0.1, 0.2, 0.35]); asPct += lv('volador', [0.1, 0.2, 0.35]); }
+  ap += lv('psiquico', [15, 40]);
+  if (has('psiquico')) ap += lv('psiquico', [15, 30]);
+  if (has('fantasma')) dodge += lv('fantasma', [0.2, 0.35]);
+  if (has('dragon') && L('dragon')) { hpFlat += lv('dragon', [300, 650]); dmgAmp += lv('dragon', [0.15, 0.35]); }
+  if (has('siniestro') && L('siniestro')) { crit += lv('siniestro', [0.25, 0.45]); critDmg += lv('siniestro', [0.2, 0.4]); }
+  if (has('acero')) dmgRed += lv('acero', [0.15, 0.32]);
+  mdef += lv('hada', [20, 45]);
+  if (has('defensor')) { def += lv('defensor', [20, 45, 80]); mdef += lv('defensor', [20, 45, 80]); }
+  if (L('defensor') >= 3 && !has('defensor')) { def += 20; mdef += 20; }
+  if (has('atacante')) atkPct += lv('atacante', [0.15, 0.35, 0.6]);
+  if (has('veloz')) asPct += lv('veloz', [0.15, 0.35, 0.6]);
+  if (has('tirador') && L('tirador')) { range += 1; dmgAmp += lv('tirador', [0.15, 0.35]); }
+  if (has('mistico')) { ap += lv('mistico', [25, 60, 100]); mana0 += lv('mistico', [0, 10, 20]); }
+  if (L('mistico') >= 3 && !has('mistico')) ap += 25;
+  if (badges.includes('roca')) { def += 25; mdef += 25; }
+  if (badges.includes('cascada')) mana0 += 25;
+  if (badges.includes('trueno')) asPct += 0.2;
+  if (badges.includes('alma')) ap += 30;
+  if (badges.includes('pantano')) dmgAmp += 0.15;
+  if (badges.includes('tierra')) hpFlat += 250;
+  const w = weather;
+  if (w === 'lluvia' && has('electrico')) asPct += 0.2;
+  if (w === 'arena' && (has('roca') || has('tierra') || has('acero'))) { def += 25; mdef += 25; }
+  if (w === 'nieve') { if (has('hielo')) def += 20; else asPct -= 0.1; }
+  if (w === 'niebla' && (has('hada') || has('psiquico'))) ap += 30;
+
+  let maxHp = Math.round((b.hp + hpFlat) * (1 + hpPct));
+  let atk = b.atk * (1 + atkPct);
+  if (weak) { maxHp = Math.round(maxHp * 0.6); atk *= 0.6; }
+  if (boss) { maxHp = Math.round(maxHp * (2.2 + stage * 0.9)); atk *= 1 + stage * 0.12; }
+  let waterRegen = has('agua') ? lv('agua', [3, 6, 10]) : 0;
+  if (L('agua') >= 3 && !has('agua')) waterRegen += 3;
+  if (w === 'sol' && has('planta')) waterRegen += 3;
+  return {
+    base: b, items, itemSet,
+    maxHp, atk, baseAs: b.as, asPct, as: +(b.as * (1 + asPct)).toFixed(2), ap: 100 + ap,
+    def: b.def + def, mdef: b.mdef + mdef, range: b.range + range,
+    mana0: b.mana0 + mana0, maxMana: b.mana,
+    crit: Math.min(1, b.crit + crit), critDmg: b.critDmg + critDmg, dodge: Math.min(0.6, dodge),
+    dmgAmp, dmgRed: Math.min(0.6, dmgRed), vamp,
+    moveMs: itemSet.has('panueloelegido') ? MOVE_MS / 2 : MOVE_MS,
+    cc: !itemSet.has('hierbamental'),
+    fireBurn: has('fuego') ? lv('fuego', [0.02, 0.035]) : 0,
+    waterRegen,
+    elecLv: has('electrico') ? L('electrico') : 0,
+    iceLv: has('hielo') ? L('hielo') : (L('hielo') >= 3 ? 1 : 0),
+    fairyHeal: has('hada') ? lv('hada', [0.2, 0.4]) : 0,
+    ghostConfuse: has('fantasma') && L('fantasma') >= 2,
+    volcan: badges.includes('volcan'),
+  };
 }
 
 // Convierte una posición local del jugador (x 0..6, y 0..3 con 0 = primera línea) a coordenadas de combate.

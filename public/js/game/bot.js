@@ -186,7 +186,7 @@ function equipItems(room, p) {
   let guard = 0;
   for (let i = 0; i < p.items.length && guard++ < 30;) {
     const it = p.items[i];
-    if (it === 'caramelo') { i++; continue; }
+    if (ITEMS[it]?.consumable) { i++; continue; }
     const defensive = ['hierro', 'zinc', 'masps'].includes(it) || ['cascodentado', 'protector', 'bandafocus', 'chalecoasalto', 'restos', 'cascabelalivio'].includes(it);
     const order = defensive ? [tank, ...carries] : carries;
     let done = false;

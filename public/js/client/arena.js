@@ -176,6 +176,13 @@ export class Arena {
     this.buildBench();
     this.buildDecor();
     this.buildWeather();
+    this.buildMotes();
+    // Sombras toon: todo recibe; los objetos con volumen (no el suelo ni la hierba) proyectan.
+    this.group.traverse((o) => {
+      if (!o.isMesh || o.material?.isShaderMaterial || o.material?.transparent) return;
+      o.receiveShadow = true;
+      o.castShadow = !o.userData.ground && !o.isInstancedMesh;
+    });
     this.setWeather('despejado', true);
     engine.onUpdate((dt, t) => this.update(dt, t));
   }
@@ -266,7 +273,7 @@ export class Arena {
     // Suelo del estadio.
     b.add(roundedBox(16.2, 0.36, 14.8, 0.5), [0, -0.22, -0.2], null, 1, 0xcfc6ae);
     b.add(roundedBox(15.4, 0.3, 14.0, 0.4), [0, -0.08, -0.2], null, 1, 0xe2dac4);
-    this.addBatch(b, 0x1a1420, 2.4);
+    this.addBatch(b, 0x1a1420, 2.4).userData.ground = true;
   }
 
   buildBoard() {
@@ -311,7 +318,7 @@ export class Arena {
       b.add(new THREE.CylinderGeometry(0.16, 0.16, 0.1, 20), [x, 0.15, 0], null, 1, 0x1a1420);
       b.add(new THREE.CylinderGeometry(0.1, 0.1, 0.11, 20), [x, 0.155, 0], null, 1, 0xffffff);
     }
-    this.addBatch(b, 0x1a1420, 1.6);
+    this.addBatch(b, 0x1a1420, 1.6).userData.ground = true;
   }
 
   buildBench() {
@@ -580,6 +587,50 @@ export class Arena {
     this.flash = 0;
   }
 
+  // Partículas ambientales: polen/luciérnagas que flotan sobre la isla (brillan con el bloom).
+  buildMotes() {
+    const N = 110;
+    const pos = new Float32Array(N * 3);
+    const seed = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * 16;
+      pos[i * 3] = Math.cos(a) * r;
+      pos[i * 3 + 1] = 0.4 + Math.random() * 4.5;
+      pos[i * 3 + 2] = Math.sin(a) * r;
+      seed[i] = Math.random();
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('seed', new THREE.BufferAttribute(seed, 1));
+    this.moteMat = new THREE.ShaderMaterial({
+      uniforms: { time: { value: 0 }, color: { value: new THREE.Color(0xfff2b0) }, glow: { value: 1 }, amount: { value: 1 } },
+      vertexShader: `
+        uniform float time; attribute float seed; varying float vA;
+        void main(){
+          vec3 p = position;
+          p.x += sin(time * 0.35 + seed * 40.0) * 1.2;
+          p.z += cos(time * 0.3 + seed * 25.0) * 1.2;
+          p.y += sin(time * 0.6 + seed * 12.0) * 0.5;
+          vA = 0.35 + 0.65 * pow(0.5 + 0.5 * sin(time * (1.2 + seed * 2.0) + seed * 30.0), 3.0);
+          vec4 mv = modelViewMatrix * vec4(p, 1.0);
+          gl_PointSize = (1.6 + seed * 1.8) * (30.0 / -mv.z) * 1.7;
+          gl_Position = projectionMatrix * mv;
+        }`,
+      fragmentShader: `
+        uniform vec3 color; uniform float glow; uniform float amount; varying float vA;
+        void main(){
+          float d = length(gl_PointCoord - 0.5);
+          float a = smoothstep(0.5, 0.0, d);
+          if (a < 0.02) discard;
+          gl_FragColor = vec4(color * mix(1.0, glow, 0.6), a * vA * amount * 0.75);
+        }`,
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    });
+    this.motes = new THREE.Points(geo, this.moteMat);
+    this.motes.frustumCulled = false;
+    this.scene.add(this.motes);
+  }
+
   setWeather(w, instant = false) {
     this.weather = w;
     const s = SKY[w] || SKY.despejado;
@@ -589,6 +640,9 @@ export class Arena {
     this.wPoints.visible = !!md;
     if (md) { this.wMat.uniforms.mode.value = md[0]; this.wMat.uniforms.color.value.setHex(md[1]); this.wMat.uniforms.size.value = md[2]; }
     if (instant) this.applySky(1);
+    // Motas ambientales según el clima (chispas en tormenta, esporas rosas en niebla…).
+    const mote = { despejado: [0xfff2b0, 1], sol: [0xffe08a, 1.2], lluvia: [0xcfe4ff, 0.35], electrico: [0xfff27a, 0.9], nieve: [0xffffff, 0], arena: [0xffd9a0, 0.4], niebla: [0xffc4ec, 1] }[w] || [0xfff2b0, 1];
+    if (this.moteMat) { this.moteMat.uniforms.color.value.setHex(mote[0]); this.moteMat.uniforms.amount.value = mote[1]; }
   }
 
   applySky(k) {
@@ -610,6 +664,7 @@ export class Arena {
   update(dt, t) {
     this.waterMat.uniforms.time.value = t;
     this.wMat.uniforms.time.value = t;
+    if (this.moteMat) { this.moteMat.uniforms.time.value = t; this.moteMat.uniforms.glow.value = this.engine.glow; }
     this.applySky(Math.min(1, dt * 1.5));
     for (const c of this.clouds.children) {
       c.position.x += c.userData.speed * dt;

@@ -10,7 +10,7 @@ const mk = async (name) => {
   const page = await browser.newPage({ viewport: { width: 1000, height: 640 } });
   page.on('pageerror', (e) => console.log(`[${name} pageerror]`, e.message));
   page.on('console', (m) => { if (m.type() === 'error' && !m.text().includes('CERT')) console.log(`[${name}]`, m.text()); });
-  await page.goto(base, { waitUntil: 'domcontentloaded' }); await page.waitForTimeout(1500);
+  await page.goto(base + '?q=bajo', { waitUntil: 'domcontentloaded' }); await page.waitForTimeout(1500);
   await page.fill('#name-input', name);
   return page;
 };
@@ -47,6 +47,15 @@ for (let i = 0; i < 60; i++) {
 for (const p of [a, b]) await p.evaluate(() => { const g = window.__pt3d.game; g.send({ t: 'buy', slot: 0 }); g.send({ t: 'autoplace' }); g.send({ t: 'ready', v: true }); g.send({ t: 'emote', e: '😂' }); g.send({ t: 'chat', text: 'hola!' }); });
 await a.waitForTimeout(1500);
 await a.screenshot({ path: `${out}/mp-a-planning.png` });
+// A visita la isla de B: B debe ver al entrenador de A en su isla.
+const bId = (await info(b)).me;
+await a.evaluate((id) => window.__pt3d.game.scout(id), bId);
+await a.waitForTimeout(2000);
+console.log('A trainers (visiting B)', JSON.stringify(await a.evaluate(() => [...window.__pt3d.game.trainers.entries()].map(([k, t]) => [k, +t.pos.x.toFixed(1), +t.pos.z.toFixed(1)]))));
+console.log('B trainers', JSON.stringify(await b.evaluate(() => [...window.__pt3d.game.trainers.entries()].map(([k, t]) => [k, +t.pos.x.toFixed(1), +t.pos.z.toFixed(1)]))));
+await b.screenshot({ path: `${out}/mp-b-visited.png` });
+await a.evaluate(() => window.__pt3d.game.scout(null));
+await a.waitForTimeout(800);
 // Reconexión: B recarga la página.
 await b.reload();
 await b.waitForTimeout(4000);

@@ -25,6 +25,7 @@ export class TrainerView {
     this.showLabel = true;
     this.held = null;
     this.moving = false;
+    this.speed = AV_SPEED;
   }
 
   // Posición autoritativa del servidor (con su destino para interpolar a velocidad constante).
@@ -37,6 +38,14 @@ export class TrainerView {
 
   walkTo(x, z) { this.target.set(x, 0, z); }
 
+  // Llega a la isla cayendo desde arriba.
+  dropIn(onLand) {
+    this.drop = 1;
+    this.dropping = true;
+    this.onLand = onLand;
+    this.view.group.position.y = 7;
+  }
+
   teleport(x, z) {
     this.pos.set(x, 0, z);
     this.target.set(x, 0, z);
@@ -46,7 +55,7 @@ export class TrainerView {
   update(dt, t) {
     const d = this.target.clone().sub(this.pos);
     const dist = d.length();
-    const step = AV_SPEED * dt;
+    const step = this.speed * dt;
     this.moving = dist > 0.02;
     if (this.moving) {
       if (dist <= step) this.pos.copy(this.target);
@@ -54,6 +63,16 @@ export class TrainerView {
       this.view.faceTo(this.target);
     }
     this.view.pos.copy(this.pos);
+    if (this.dropping) {
+      this.drop = Math.max(0, this.drop - dt * 2.4);
+      this.view.pos.y = this.drop * this.drop * 7;
+      this.view.group.position.y = this.view.pos.y;
+      if (this.drop <= 0) {
+        this.dropping = false;
+        this.view.jump();
+        this.onLand && this.onLand();
+      }
+    }
     this.view.walkAmt += ((this.moving ? 1 : 0) - this.view.walkAmt) * Math.min(1, dt * 10);
     this.view.update(dt, t);
     // Pokémon agarrado (carrusel): le sigue por detrás.

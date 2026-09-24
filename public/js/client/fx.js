@@ -30,9 +30,10 @@ class Particles {
     const m = new THREE.ShaderMaterial({
       vertexShader: `attribute float size; attribute float alpha; attribute vec3 color; varying vec3 vC; varying float vA;
         void main(){ vC = color; vA = alpha; vec4 mv = modelViewMatrix * vec4(position,1.0); gl_PointSize = size * (300.0 / -mv.z); gl_Position = projectionMatrix * mv; }`,
-      fragmentShader: `varying vec3 vC; varying float vA;
+      uniforms: { glow: { value: 1 } },
+      fragmentShader: `uniform float glow; varying vec3 vC; varying float vA;
         void main(){ vec2 c = gl_PointCoord - 0.5; float d = length(c); if (d > 0.5 || vA < 0.01) discard;
-          float edge = smoothstep(0.5, 0.36, d); vec3 col = mix(vC * 0.55, vC, edge); gl_FragColor = vec4(col, vA); }`,
+          float edge = smoothstep(0.5, 0.36, d); vec3 col = mix(vC * 0.55, vC, edge); gl_FragColor = vec4(col * mix(1.0, glow, edge), vA); }`,
       transparent: true, depthWrite: false,
     });
     this.points = new THREE.Points(g, m);
@@ -73,6 +74,28 @@ class Particles {
 }
 
 const tmpV = new THREE.Vector3();
+
+// Estilos de proyectil del ataque básico (cada línea tiene el suyo, ver lore.js).
+const SHOTS = {
+  orb: { geo: 'sphere' },
+  flame: { geo: 'sphere', color: 0xffb040, trail: 0xff5a1a, rise: true, rate: 1, trailSize: 2.6, trailLife: 0.35, pulse: 0.25, arc: 0.4 },
+  bubble: { geo: 'sphere', color: 0xbfe8ff, alpha: 0.75, trail: 0x6ac0ff, trailSize: 1.4, wobble: 0.06, size: 1.25, glow: 0.4 },
+  leaf: { geo: 'leaf', color: 0x7ee05a, trail: 0x4fc25a, spin: 18, size: 1.3, rate: 0.5, wobble: 0.08 },
+  spark: { geo: 'star', color: 0xfff27a, trail: 0xffe14a, zigzag: true, spin: 25, rate: 1, trailSize: 1.6, glow: 1.3 },
+  fist: { geo: 'sphere', color: 0xffc0a0, trail: 0xe0503a, size: 1.2, arc: 0.2 },
+  rock: { geo: 'rock', color: 0xb09060, trail: 0x8a7050, spin: 10, arc: 2, rate: 0.4, grav: -6, glow: 0 },
+  wind: { geo: 'blade', color: 0xeaf4ff, alpha: 0.8, trail: 0xdfe8ff, face: true, size: 1.4, arc: 0.1, rate: 0.5 },
+  shadow: { geo: 'sphere', color: 0x5a3a8a, trail: 0x9a6ae0, wobble: 0.12, rate: 1, trailSize: 2.8, trailLife: 0.4, glow: 0.6 },
+  psy: { geo: 'ring', color: 0xff8ac0, trail: 0xff6aa8, spin: 20, size: 1.3, arc: 0.2 },
+  ice: { geo: 'shard', color: 0xd8f8ff, trail: 0x9ef0ff, face: true, arc: 0.15, trailSize: 1.6 },
+  star: { geo: 'star', color: 0xfff0a0, trail: 0xffe07a, spin: 15, trailSize: 1.8 },
+  coin: { geo: 'coin', color: 0xffcb05, trail: 0xffe07a, spin: 30, arc: 1.2, rate: 0.5 },
+  aura: { geo: 'sphere', color: 0x7ab8ff, trail: 0x3d7dff, pulse: 0.2, size: 1.3, rate: 1, trailSize: 2.8, glow: 1.2 },
+  shuriken: { geo: 'shuriken', color: 0x9ad8ff, trail: 0x3d9bff, spin: 40, arc: 0.1, size: 1.3 },
+  blade: { geo: 'blade', color: 0xd8f0c0, trail: 0x9be86a, face: true, size: 1.3, arc: 0.1 },
+  dragon: { geo: 'sphere', color: 0xb08aff, trail: 0x6f35fc, rate: 1, trailSize: 3, trailLife: 0.4, size: 1.3, glow: 1.2 },
+  steel: { geo: 'box', color: 0xd8e4f0, trail: 0xa8b8cc, spin: 14, arc: 0.3 },
+};
 const rnd = (a = 1) => (Math.random() * 2 - 1) * a;
 
 export class FX {
@@ -87,10 +110,29 @@ export class FX {
     this.ringGeo = new THREE.RingGeometry(0.85, 1, 40);
     this.cylGeo = new THREE.CylinderGeometry(1, 1, 1, 12, 1, true);
     this.cylGeo.rotateX(Math.PI / 2);
+    // Formas de proyectil por estilo.
+    const leaf = new THREE.SphereGeometry(1, 10, 6); leaf.scale(1, 0.25, 0.55);
+    const shard = new THREE.ConeGeometry(0.55, 1.8, 6); shard.rotateX(Math.PI / 2);
+    const blade = new THREE.TorusGeometry(0.9, 0.18, 6, 16, Math.PI); blade.rotateX(Math.PI / 2);
+    const shuriken = new THREE.OctahedronGeometry(1, 0); shuriken.scale(1.1, 0.25, 1.1);
+    this.geos = {
+      sphere: this.sphereGeo, leaf, shard, blade, shuriken,
+      rock: new THREE.DodecahedronGeometry(1, 0),
+      star: new THREE.OctahedronGeometry(1, 0),
+      ring: new THREE.TorusGeometry(0.8, 0.22, 8, 20),
+      coin: new THREE.CylinderGeometry(0.9, 0.9, 0.22, 16).rotateX(Math.PI / 2),
+      box: new THREE.BoxGeometry(1, 1, 1),
+    };
     engine.onUpdate((dt) => this.update(dt));
   }
 
+  // Color HDR: con bloom activo los efectos superan 1.0 y brillan.
+  hdr(color, k = 1) {
+    return new THREE.Color(color).multiplyScalar(1 + (this.engine.glow - 1) * k);
+  }
+
   update(dt) {
+    this.parts.points.material.uniforms.glow.value = this.engine.glow;
     this.parts.update(dt);
     // Los efectos creados durante la actualización se añaden a la lista nueva.
     const cur = this.items;
@@ -136,19 +178,34 @@ export class FX {
   }
 
   // Proyectil con estela desde a hasta b en d segundos.
-  projectile(a, b, color, d = 0.3, size = 0.18, arc = 0.6) {
-    const mat = new THREE.MeshBasicMaterial({ color });
-    const mesh = new THREE.Mesh(this.sphereGeo, mat);
-    mesh.scale.setScalar(size);
+  projectile(a, b, color, d = 0.3, size = 0.18, arc = 0.6, style = 'orb') {
+    const S = SHOTS[style] || SHOTS.orb;
+    const col = S.color ?? color;
+    const mat = new THREE.MeshBasicMaterial({ color: this.hdr(col, S.glow ?? 1), transparent: !!S.alpha, opacity: S.alpha || 1, depthWrite: !S.alpha });
+    const mesh = new THREE.Mesh(this.geos[S.geo] || this.sphereGeo, mat);
+    const sz = size * (S.size || 1);
+    mesh.scale.set(sz * (S.sx || 1), sz * (S.sy || 1), sz * (S.sz || 1));
     this.scene.add(mesh);
     const from = a.clone(), to = b.clone();
+    const dir = to.clone().sub(from);
+    const side = new THREE.Vector3(-dir.z, 0, dir.x).normalize();
+    const arcH = arc * (S.arc ?? 1);
+    const trail = S.trail ?? col;
     this.items.push({
       obj: mesh, t: 0,
       update: (t) => {
         const k = Math.min(1, t / d);
         mesh.position.lerpVectors(from, to, k);
-        mesh.position.y += Math.sin(k * Math.PI) * arc;
-        if (Math.random() < 0.8) this.parts.emit(mesh.position, new THREE.Vector3(rnd(0.3), rnd(0.3), rnd(0.3)), color, size * 2.2, 0.25, 0);
+        mesh.position.y += Math.sin(k * Math.PI) * arcH;
+        if (S.zigzag) mesh.position.addScaledVector(side, Math.sin(k * 30) * 0.18 * (1 - k));
+        if (S.wobble) mesh.position.addScaledVector(side, Math.sin(k * 12 + t * 4) * S.wobble);
+        if (S.spin) { mesh.rotation.y += S.spin * 0.016; mesh.rotation.x += S.spin * 0.011; }
+        if (S.face) { mesh.lookAt(to); }
+        if (S.pulse) mesh.scale.setScalar(sz * (1 + Math.sin(t * 40) * S.pulse));
+        if (Math.random() < (S.rate ?? 0.8)) {
+          const v = S.rise ? new THREE.Vector3(rnd(0.3), 0.8 + Math.random(), rnd(0.3)) : new THREE.Vector3(rnd(0.3), rnd(0.3), rnd(0.3));
+          this.parts.emit(mesh.position, v, trail, sz * (S.trailSize || 2.2), S.trailLife || 0.25, S.grav || 0);
+        }
         return k < 1;
       },
       dispose: () => mat.dispose(),
@@ -156,7 +213,7 @@ export class FX {
   }
 
   ring(pos, radius, color, dur = 0.5, y = 0.15) {
-    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, side: THREE.DoubleSide, depthWrite: false });
+    const mat = new THREE.MeshBasicMaterial({ color: this.hdr(color, 0.6), transparent: true, side: THREE.DoubleSide, depthWrite: false });
     const m = new THREE.Mesh(this.ringGeo, mat);
     m.rotation.x = -Math.PI / 2;
     m.position.set(pos.x, y, pos.z);
@@ -175,7 +232,7 @@ export class FX {
   }
 
   dome(pos, radius, color, dur = 0.45) {
-    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+    const mat = new THREE.MeshBasicMaterial({ color: this.hdr(color, 0.5), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
     const m = new THREE.Mesh(this.sphereGeo, mat);
     m.position.copy(pos);
     this.scene.add(m);
@@ -192,8 +249,8 @@ export class FX {
   }
 
   beam(a, b, color, width = 0.35, dur = 0.45) {
-    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, depthWrite: false });
-    const inner = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, depthWrite: false });
+    const mat = new THREE.MeshBasicMaterial({ color: this.hdr(color, 0.7), transparent: true, depthWrite: false });
+    const inner = new THREE.MeshBasicMaterial({ color: this.hdr(0xffffff, 0.35), transparent: true, depthWrite: false });
     const g = new THREE.Group();
     const m = new THREE.Mesh(this.cylGeo, mat);
     const m2 = new THREE.Mesh(this.cylGeo, inner);
@@ -235,7 +292,7 @@ export class FX {
       }
     }
     const geo = new THREE.BufferGeometry().setFromPoints(pts);
-    const mat = new THREE.LineBasicMaterial({ color, transparent: true });
+    const mat = new THREE.LineBasicMaterial({ color: this.hdr(color, 1.2), transparent: true });
     const line = new THREE.Line(geo, mat);
     this.scene.add(line);
     this.items.push({
