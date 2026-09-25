@@ -197,6 +197,9 @@ input { font-family: inherit; }
 .trait .cnt small { font-size: 11px; color: var(--muted); font-weight: 500; }
 .trait:not(.on) { opacity: .62; }
 .trait-empty { font-size: 12px; color: var(--muted); background: rgba(20,26,50,.75); border-radius: 12px; padding: 8px 10px; }
+.trait-owner { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #cfe0ff; background: rgba(61,125,202,.85); border: 1.5px solid rgba(255,255,255,.35); border-radius: 10px; padding: 4px 8px; }
+.trait-owner .ic { width: 15px; height: 15px; flex: none; }
+.trait-owner b { color: #fff; }
 
 #players { position: absolute; right: 10px; top: 92px; display: flex; flex-direction: column; gap: 5px; width: 210px; }
 .pl { display: flex; align-items: center; gap: 7px; border-radius: 14px; padding: 4px 8px 4px 4px; cursor: pointer; position: relative; transition: transform .15s; }
@@ -255,7 +258,8 @@ input { font-family: inherit; }
 #capture-btn, #badge-btn { position: absolute; left: 50%; top: 112px; transform: translateX(-50%); }
 #badge-btn { top: 160px; }
 #capture-btn .btn, #badge-btn .btn { animation: pulse 1.4s ease-in-out infinite; white-space: nowrap; }
-#scout-banner { position: absolute; left: 50%; top: 106px; transform: translateX(-50%); background: rgba(40, 90, 200, .92); padding: 6px 14px; border-radius: 12px; font-weight: 600; cursor: pointer; }
+#scout-banner { position: absolute; left: 50%; top: 106px; transform: translateX(-50%); background: rgba(40, 90, 200, .92); padding: 6px 14px; border-radius: 12px; font-weight: 600; cursor: pointer; text-align: center; white-space: nowrap; }
+#scout-banner small { display: block; font-size: 12px; font-weight: 500; color: #ffe07a; margin-top: 1px; }
 
 /* ───────── Tienda ───────── */
 #shop {

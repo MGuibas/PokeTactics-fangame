@@ -878,10 +878,13 @@ export class Combat {
       sides: this.sides.map((s) => ({ playerId: s.playerId, name: s.name, ghost: !!s.ghost, pve: !!s.pve })),
       units: this.units.map((u) => ({
         id: u.id, side: u.side, form: u.form, line: u.line, star: u.star, shiny: u.shiny, items: u.items,
-        x: u.x, y: u.y, hp: u.hp, maxHp: u.maxHp, mana: u.mana, maxMana: u.maxMana, uid: u.uid,
-        boss: u.boss, fr: u.fr, shield: this.shieldOf(u),
+        x: u.x, y: u.y, hp: Math.max(0, Math.round(u.hp)), maxHp: u.maxHp, mana: Math.round(u.mana), maxMana: u.maxMana, uid: u.uid,
+        boss: u.boss, fr: u.fr, shield: this.shieldOf(u), alive: u.alive, flags: this.flags(u),
       })),
       time: this.t,
+      // Si ya terminó (p. ej. al mirar un combate acabado), quién ganó.
+      done: !!this.done,
+      winner: this.result ? this.result.winner : null,
     };
   }
 }

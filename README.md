@@ -69,7 +69,7 @@ En **Ajustes** (engranaje) ves cuántos archivos ha encontrado y puedes ajustar 
 | Quitar objetos | Usa un **Imán Extractor** sobre el Pokémon (fuera de combate) |
 | Ficha completa | Clic en un Pokémon (tuyo, rival o en combate); clic derecho en una carta de la tienda |
 | Mover a tu entrenador | **Clic derecho** en el suelo (en móvil, toca el suelo) |
-| Visitar a un rival | Clic en su nombre: tu entrenador viaja a su isla (Esc para volver) |
+| Visitar a un rival | Clic en su nombre: tu entrenador viaja a su isla y ves su combate y sus sinergias; el tuyo sigue en segundo plano (Esc para volver) |
 | Chat / emotes | **Enter** / botón Emote |
 | Gráficos y sonido | Botón **Ajustes** (calidad Alta/Media/Baja y volúmenes) |
 
@@ -152,6 +152,7 @@ scripts/
   carousel-test.mjs       carrusel, entrenador caminando y botín
   mp-test.mjs             dos navegadores en la misma sala (visitas y reconexión)
   polish-test.mjs         ficha de Pokémon, visitas, objetos en combate, marca de la tienda
+  spectate-test.mjs, mp-spectate-test.mjs  espiar combates ajenos y volver al tuyo (solo y multijugador)
   av-test.mjs, fx-test.mjs  audio (archivos propios y síntesis) y efectos con bloom
 ```
 

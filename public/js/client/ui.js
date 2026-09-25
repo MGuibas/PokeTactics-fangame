@@ -149,7 +149,9 @@ export class Hud {
   renderMe(me, room = this.game.room) {
     if (!me) return;
     this.renderShop(me);
-    this.renderTraits(me.traits || {});
+    // Sinergias del jugador que estás mirando (las tuyas si estás en tu isla).
+    const vp = this.game.viewedPlayer();
+    this.renderTraits(vp ? vp.traits || {} : me.traits || {}, vp);
     this.renderItems(me.items || []);
     $('gold-val').textContent = me.gold;
     $('level-label').innerHTML = `Nivel ${me.level} <span>${me.board.length}/${me.maxBoard}</span>`;
@@ -276,13 +278,14 @@ export class Hud {
     }).join('');
   }
 
-  renderTraits(counts) {
-    const key = JSON.stringify(counts);
+  renderTraits(counts, owner = null) {
+    const key = JSON.stringify(counts) + (owner ? owner.id : '');
     if (this._traitsKey === key) return;
     this._traitsKey = key;
     const list = Object.entries(counts).filter(([id]) => TRAITS[id]).map(([id, n]) => ({ id, n, lv: traitLevel(id, n) }));
     list.sort((a, b) => b.lv - a.lv || b.n - a.n);
-    $('traits').innerHTML = list.map(({ id, n, lv }) => {
+    const head = owner ? `<div class="trait-owner">${icon('eye')}<span>Sinergias de <b>${esc(owner.name)}</b></span></div>` : '';
+    $('traits').innerHTML = head + list.map(({ id, n, lv }) => {
       const t = traitInfo(id);
       const th = TRAITS[id].th;
       const next = th.find((x) => x > n);
@@ -292,7 +295,7 @@ export class Hud {
         <div class="hex">${icon(id)}</div>
         <div class="tt"><div class="tn">${t.name}</div><div class="th">${th.map((x, i) => `<i class="${i < lv ? 'on' : ''}">${x}</i>`).join('')}</div></div>
         <span class="cnt">${n}${next ? `<small>/${next}</small>` : ''}</span></div>`;
-    }).join('') || '<div class="trait-empty">Coloca Pokémon en el tablero para activar sinergias</div>';
+    }).join('') || (owner ? '<div class="trait-empty">Sin Pokémon en el tablero</div>' : '<div class="trait-empty">Coloca Pokémon en el tablero para activar sinergias</div>');
   }
 
   renderItems(items) {
@@ -410,15 +413,16 @@ export class Hud {
   }
 
   showTraitTip(id, n, x, y) {
-    const key = 't' + id + n;
+    const key = 't' + id + n + (this.game.scoutId || '');
     if (this.tipKey !== key) {
       this.tipKey = key;
       const t = traitInfo(id);
       const tr = TRAITS[id];
       const lv = traitLevel(id, n);
       const lines = LINE_LIST.filter((l) => l.types.includes(id) || l.role === id);
-      const mine = new Set([...this.game.me.board, ...this.game.me.bench.filter(Boolean)].map((u) => u.line));
-      const onBoard = new Set(this.game.me.board.map((u) => u.line));
+      const src = this.game.viewedPlayer() || this.game.me;
+      const mine = new Set([...src.board, ...(src.bench || []).filter(Boolean)].map((u) => u.line));
+      const onBoard = new Set(src.board.map((u) => u.line));
       this.tip.innerHTML = `<h4>${traitBadge(id)} ${t.name} <span class="sub">(${n})</span></h4>
         <div>${tr.desc}</div>
         ${tr.th.map((x, i) => `<div class="lv ${i < lv ? 'on' : ''}"><b>${x}</b> ${tr.lv[i]}</div>`).join('')}

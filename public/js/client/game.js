@@ -31,7 +31,8 @@ export class GameClient {
     this.room = null;
     this.views = new Map(); // tablero/banquillo (uid)
     this.seenUnits = new Set();
-    this.cviews = new Map(); // combate (id)
+    this.cviews = new Map(); // combate mostrado (id de unidad)
+    this.combats = new Map(); // todos los combates recibidos, mostrados o en segundo plano
     this.sviews = new Map(); // safari
     this.fight = null;
     this.scoutId = null;
@@ -107,7 +108,9 @@ export class GameClient {
 
   onPhase(from, to) {
     if (to === 'planning') {
+      this.combats.clear();
       this.exitCombat();
+      this.updateScoutBanner();
       sfx.setMood('planning');
       this.dynaArmed = false;
       this.dynaUsed = false;
@@ -115,7 +118,9 @@ export class GameClient {
     }
     if (to === 'safari') {
       sfx.setMood('safari');
+      this.combats.clear();
       this.exitCombat();
+      this.updateScoutBanner();
       this.hud.banner('¡Zona Safari!', '', 'Los entrenadores con menos vida salen primero');
       this.engine.camTarget.set(0, 0, 1.2);
       this.engine.camBase.set(0, 22, 16);
@@ -275,48 +280,102 @@ export class GameClient {
   }
 
   // ───────────────────────── Combate ─────────────────────────
+  // Los combates recibidos se guardan y se actualizan aunque no se estén mostrando:
+  // el tuyo sigue en segundo plano mientras miras otra isla y al volver está al día.
   onCombatStart(m) {
-    const target = this.scoutId || this.myId;
-    if (!m.sides.some((s) => s.playerId === target)) return;
+    const units = new Map();
+    for (const u of m.units) units.set(u.id, { ...u, alive: u.alive !== false && u.hp > 0, flags: u.flags || 0 });
+    const known = this.combats.has(m.id);
+    const c = { id: m.id, kind: m.kind, title: m.title, sides: m.sides, time: m.time, ended: !!m.done, winner: m.winner ?? null, units };
+    this.combats.set(m.id, c);
+    const intro = m.time < 200 && !known;
+    const mine = c.sides.some((s) => s.playerId === this.myId && !s.ghost);
+    if (mine && intro) sfx.setMood(this.combatMood(c));
+    if (this.combatFor(this.viewedId()) !== c) return;
+    if (this.fight?.id === c.id) this.reconcileCombat(c);
+    else this.showCombat(c, intro);
+  }
+
+  viewedId() { return this.scoutId || this.myId; }
+
+  // Combate en el que participa un jugador (no cuenta el "eco" de otro combate).
+  combatFor(pid) {
+    let found = null;
+    for (const c of this.combats.values()) if (c.sides.some((s) => s.playerId === pid && !s.ghost)) found = c;
+    return found;
+  }
+
+  combatMood(c) {
+    return c.kind === 'pvp' ? 'battle' : c.kind === 'gym' ? 'battle-gym' : c.kind === 'raid' ? 'raid' : 'battle-wild';
+  }
+
+  // Muestra un combate guardado (con los Pokémon donde están ahora mismo).
+  showCombat(c, intro = false) {
     this.exitCombat(true);
     this.mode = 'combat';
-    this.fight = { id: m.id, mirror: m.sides[1].playerId === target, mySide: m.sides[1].playerId === target ? 1 : 0, kind: m.kind, title: m.title, sides: m.sides, ended: false, units: new Map() };
-    const f = this.fight;
-    for (const u of m.units) {
-      const [x, y] = f.mirror ? mirror(u.x, u.y) : [u.x, u.y];
-      const pos = hexToWorld(x, y);
-      const enemy = u.side !== f.mySide;
-      const v = new UnitView(this.ctx, { id: u.id, uid: u.uid, form: u.form, line: u.line, star: u.star, shiny: u.shiny, items: u.items, enemy, boss: u.boss, hp: u.hp, maxHp: u.maxHp, mana: u.mana, maxMana: u.maxMana, shield: u.shield, fr: u.fr });
-      v.place(pos);
-      v.yaw = v.targetYaw = enemy ? 0 : Math.PI;
-      v.types = FORMS[u.form].types;
-      this.cviews.set(u.id, v);
-      f.units.set(u.id, u);
-      if (enemy && m.time < 200) {
-        v.group.visible = false;
-        v.bar.style.visibility = 'hidden';
-        const reveal = () => {
-          if (v.group.visible) return;
-          v.group.visible = true; v.bar.style.visibility = ''; v.jump();
-          if (v.shiny) { sfx.play('shiny'); this.fx.sparkle(v.midPos(), 0xffffff, 20, 0.7); }
-          sfx.play('ballopen');
-          sfx.cry(v.form, v.line, v.star, { vol: 0.55, pan: this.panOf(v) });
-        };
-        setTimeout(() => this.fx.pokeball(pos, reveal), 150 + Math.random() * 450);
-        setTimeout(reveal, 1300);
-      }
-    }
+    const target = this.viewedId();
+    const side = c.sides.findIndex((s) => s.playerId === target && !s.ghost);
+    const mySide = side >= 0 ? side : 0;
+    this.fight = { id: c.id, mirror: mySide === 1, mySide, kind: c.kind, title: c.title, sides: c.sides, ended: c.ended };
+    for (const u of c.units.values()) if (u.alive) this.addCombatView(u, intro);
     this.refreshBoard();
     this.syncTrainers();
-    if (m.time < 200) {
-      if (m.kind === 'pvp') {
-        const opp = m.sides[1 - f.mySide];
+    if (intro) {
+      if (c.kind === 'pvp') {
+        const opp = c.sides[1 - mySide];
         this.hud.banner('¡Combate!', '', `vs. ${esc(opp.name)}`);
-      } else this.hud.banner(m.kind === 'raid' ? '¡Incursión Dinamax!' : m.kind === 'gym' ? '¡Desafío!' : '¡Pokémon salvajes!', '', esc(m.title));
+      } else this.hud.banner(c.kind === 'raid' ? '¡Incursión Dinamax!' : c.kind === 'gym' ? '¡Desafío!' : '¡Pokémon salvajes!', '', esc(c.title));
       sfx.play('fight');
     }
-    sfx.setMood(m.kind === 'pvp' ? 'battle' : m.kind === 'gym' ? 'battle-gym' : m.kind === 'raid' ? 'raid' : 'battle-wild');
+    // Si no participas en ningún combate (eliminado), la música sigue al que miras.
+    if (!this.combatFor(this.myId)) sfx.setMood(this.combatMood(c));
     this.hud.renderMe(this.me);
+    this.updateScoutBanner();
+  }
+
+  addCombatView(u, intro = false) {
+    const f = this.fight;
+    const pos = this.combatPos(u.x, u.y);
+    const enemy = u.side !== f.mySide;
+    const v = new UnitView(this.ctx, { id: u.id, uid: u.uid, form: u.form, line: u.line, star: u.star, shiny: u.shiny, items: u.items, enemy, boss: u.boss, hp: u.hp, maxHp: u.maxHp, mana: u.mana, maxMana: u.maxMana, shield: u.shield, fr: u.fr });
+    v.place(pos);
+    v.yaw = v.targetYaw = enemy ? 0 : Math.PI;
+    v.types = FORMS[u.form].types;
+    if (u.flags) v.setState(u.hp, u.maxHp, u.mana, u.maxMana, u.shield, u.flags);
+    this.cviews.set(u.id, v);
+    if (enemy && intro) {
+      v.group.visible = false;
+      v.bar.style.visibility = 'hidden';
+      const reveal = () => {
+        if (v.group.visible || v.removed) return;
+        v.group.visible = true; v.bar.style.visibility = ''; v.jump();
+        if (v.shiny) { sfx.play('shiny'); this.fx.sparkle(v.midPos(), 0xffffff, 20, 0.7); }
+        sfx.play('ballopen');
+        sfx.cry(v.form, v.line, v.star, { vol: 0.55, pan: this.panOf(v) });
+      };
+      setTimeout(() => this.fx.pokeball(pos, reveal), 150 + Math.random() * 450);
+      setTimeout(reveal, 1300);
+    }
+    return v;
+  }
+
+  // Ajusta las vistas del combate mostrado al estado guardado (llega un estado completo nuevo).
+  reconcileCombat(c) {
+    this.fight.ended = c.ended;
+    for (const u of c.units.values()) {
+      let v = this.cviews.get(u.id);
+      if (!u.alive) {
+        if (v && !v.dead) { v.dispose(); this.cviews.delete(u.id); }
+        continue;
+      }
+      if (!v) { this.addCombatView(u); continue; }
+      if (v.dead) continue;
+      v.setState(u.hp, u.maxHp, u.mana, u.maxMana, u.shield, u.flags);
+      v.items = u.items || [];
+      v.updateBar();
+      const p = this.combatPos(u.x, u.y);
+      if (v.pos.distanceToSquared(p) > 0.01) v.place(p);
+    }
   }
 
   combatPos(x, y) {
@@ -325,14 +384,29 @@ export class GameClient {
   }
 
   onCombatTick(m) {
-    const f = this.fight;
-    if (!f || m.id !== f.id) return;
+    const c = this.combats.get(m.id);
+    if (!c) return;
+    c.time = m.time;
     const seen = new Set();
+    for (const s of m.u) {
+      const [id, x, y, hp, maxHp, mana, maxMana, shield, flags] = s;
+      const u = c.units.get(id);
+      if (!u) continue;
+      u.x = x; u.y = y; u.hp = hp; u.maxHp = maxHp; u.mana = mana; u.maxMana = maxMana; u.shield = shield; u.flags = flags; u.alive = true;
+      seen.add(id);
+    }
+    for (const u of c.units.values()) if (!seen.has(u.id)) u.alive = false;
+    for (const e of m.ev) if (e.k === 'item') { const u = c.units.get(e.u); if (u) u.items = e.items; }
+    // Solo se dibuja el combate que estás mirando.
+    const f = this.fight;
+    if (!f || m.id !== f.id) {
+      if (this.scoutId && performance.now() - (this._bannerAt || 0) > 250) { this._bannerAt = performance.now(); this.updateScoutBanner(); }
+      return;
+    }
     for (const s of m.u) {
       const [id, x, y, hp, maxHp, mana, maxMana, shield, flags] = s;
       const v = this.cviews.get(id);
       if (!v || v.dead) continue;
-      seen.add(id);
       v.setState(hp, maxHp, mana, maxMana, shield, flags);
       const p = this.combatPos(x, y);
       if (v.pos.distanceToSquared(p) > 0.01 && !v.anim) v.moveTo(p, 300, 0.25);
@@ -489,18 +563,47 @@ export class GameClient {
   }
 
   onCombatEnd(m) {
+    const c = this.combats.get(m.id);
+    if (c) { c.ended = true; c.winner = m.winner; }
     const f = this.fight;
-    if (!f || m.id !== f.id) return;
+    const shown = !!f && f.id === m.id;
+    const mySide = m.home === this.myId ? 0 : m.away === this.myId ? 1 : -1;
+    // Tu resultado se anuncia siempre, también si estabas mirando otra isla.
+    if (mySide >= 0) this.announceResult(m, mySide, shown && !this.scoutId);
+    this.updateScoutBanner();
+    if (!shown) return;
     f.ended = true;
-    const target = this.scoutId || this.myId;
-    const mySide = f.mySide;
+    if (mySide < 0 || this.scoutId) {
+      // Combate ajeno: quién gana, desde el punto de vista del jugador que miras.
+      const name = f.sides[f.mySide]?.name || '';
+      const cls = m.winner === -1 ? 'draw' : m.winner === f.mySide ? 'win' : 'lose';
+      const txt = cls === 'draw' ? 'Empate' : cls === 'win' ? `¡Gana ${esc(name)}!` : `${esc(name)} pierde`;
+      const dmg = m.dmg?.[this.scoutId];
+      this.hud.banner(txt, cls, dmg ? `−${dmg} PS` : '');
+    }
+    for (const v of this.cviews.values()) {
+      if (v.dead) continue;
+      const won = (v.enemy ? 1 - f.mySide : f.mySide) === m.winner;
+      if (won) setTimeout(() => v.celebrate(), Math.random() * 300);
+    }
+    this.showRecap(m.stats, f.mySide);
+    // Los entrenadores celebran o se lamentan según el resultado de su lado.
+    const cls = m.winner === -1 ? 'draw' : m.winner === f.mySide ? 'win' : 'lose';
+    for (const tr of this.trainers.values()) {
+      const r = tr.mirror ? (cls === 'win' ? 'lose' : cls === 'lose' ? 'win' : cls) : cls;
+      if (r === 'win') tr.view.celebrate(); else if (r === 'lose') tr.view.hitFlash();
+    }
+  }
+
+  // Resultado de tu combate: cartel si lo estás viendo; aviso si estabas mirando otra isla.
+  announceResult(m, mySide, asBanner) {
     let cls, txt, sub = '';
     if (m.winner === -1) { cls = 'draw'; txt = 'Empate'; }
     else if (m.winner === mySide) { cls = 'win'; txt = '¡Victoria!'; }
     else { cls = 'lose'; txt = 'Derrota'; }
-    const dmg = m.dmg?.[target];
+    const dmg = m.dmg?.[this.myId];
     if (dmg) sub = `−${dmg} PS`;
-    if (m.loot && target === this.myId) {
+    if (m.loot) {
       const l = m.loot;
       const parts = [];
       if (l.legend) parts.push(`¡${FORMS[l.legend].name}!`);
@@ -511,19 +614,10 @@ export class GameClient {
     }
     const g = m.gold?.[mySide];
     if (g) sub = (sub ? sub + ' · ' : '') + `Día de Pago: +${g} oro`;
-    this.hud.banner(txt, cls, sub);
-    if (target === this.myId) { if (cls === 'win' || cls === 'lose') sfx.jingle(cls === 'win' ? 'victory' : 'defeat'); else sfx.play('round'); }
-    for (const v of this.cviews.values()) {
-      if (v.dead) continue;
-      const won = (v.enemy ? 1 - mySide : mySide) === m.winner;
-      if (won) setTimeout(() => v.celebrate(), Math.random() * 300);
-    }
-    this.showRecap(m.stats, mySide);
-    // Los entrenadores celebran o se lamentan según el resultado de su lado.
-    for (const tr of this.trainers.values()) {
-      const r = tr.mirror ? (cls === 'win' ? 'lose' : cls === 'lose' ? 'win' : cls) : cls;
-      if (r === 'win') tr.view.celebrate(); else if (r === 'lose') tr.view.hitFlash();
-    }
+    if (asBanner) this.hud.banner(txt, cls, sub);
+    else this.hud.toast(`Tu combate: ${txt}${sub ? ' · ' + sub : ''}`, true);
+    if (cls === 'win' || cls === 'lose') sfx.jingle(cls === 'win' ? 'victory' : 'defeat');
+    else sfx.play('round');
   }
 
   showRecap(stats, mySide) {
@@ -548,7 +642,7 @@ export class GameClient {
       this.mode = 'board';
       this.refreshBoard();
     }
-    if (hadFight) this.syncTrainers();
+    if (hadFight) { this.syncTrainers(); this.updateScoutBanner(); }
   }
 
   // ───────────────────────── Dinamax ─────────────────────────
@@ -1161,28 +1255,58 @@ export class GameClient {
     if (id === this.myId) id = null;
     if (this.scoutId === id) id = null;
     this.scoutId = id;
-    this.send({ t: 'scout', id });
-    const b = $('scout-banner');
-    if (id) {
-      const p = this.room.players.find((x) => x.id === id);
-      b.textContent = `Viendo a ${p?.name} · clic para volver`;
-      b.classList.remove('hidden');
-    } else b.classList.add('hidden');
-    // Al cambiar de vista durante un combate, el servidor enviará el combate correspondiente.
-    if (this.room?.phase === 'combat') { this.exitCombat(true); this.mode = 'combat'; }
-    else this.exitCombat();
-    for (const v of this.views.values()) v.dispose();
-    this.views.clear();
-    this.refreshBoard();
-    // Los entrenadores de la isla anterior desaparecen; los de la nueva aparecen (el tuyo llega de un salto).
+    // Los combates de otras islas que ya no miras dejan de llegar: se descartan.
+    for (const [cid, c] of this.combats) {
+      if (!c.sides.some((s) => !s.ghost && (s.playerId === this.myId || (id && s.playerId === id)))) this.combats.delete(cid);
+    }
+    // Primero se cambia la vista local (en solitario la respuesta del servidor llega al instante
+    // y no debe borrarse después).
     for (const tr of this.trainers.values()) tr.dispose();
     this.trainers.clear();
+    this.exitCombat(true);
+    for (const v of this.views.values()) v.dispose();
+    this.views.clear();
+    this.syncCombatView();
     this.syncTrainers();
     for (const v of this.orbViews.values()) v.dispose(false);
     this.orbViews.clear();
     this.syncOrbs();
     this.hud._plKey = null;
     this.hud.render(this.room, this.me);
+    this.updateScoutBanner();
+    // El servidor manda el estado del combate de la isla que pasas a mirar.
+    this.send({ t: 'scout', id });
+  }
+
+  // Cartel "Viendo a…": contra quién pelea y cómo va tu propio combate en segundo plano.
+  updateScoutBanner() {
+    const b = $('scout-banner');
+    if (!this.scoutId) { b.classList.add('hidden'); return; }
+    const p = this.room?.players.find((x) => x.id === this.scoutId);
+    let txt = `Viendo a ${p?.name || ''}`;
+    const f = this.mode === 'combat' && this.fight;
+    if (f) { const opp = f.sides[1 - f.mySide]; if (opp) txt += ` (contra ${opp.name})`; }
+    let mine = '';
+    const c = this.combatFor(this.myId);
+    if (c && (!f || f.id !== c.id)) {
+      const my = c.sides.findIndex((x) => x.playerId === this.myId && !x.ghost);
+      const alive = (side) => [...c.units.values()].filter((u) => u.alive && u.side === side).length;
+      mine = c.ended
+        ? `Tu combate: ${c.winner === -1 ? 'empate' : c.winner === my ? '¡victoria!' : 'derrota'}`
+        : `Tu combate: ${alive(my)} vs ${alive(1 - my)}`;
+    }
+    const html = `${esc(txt)} · clic para volver${mine ? `<small>${esc(mine)}</small>` : ''}`;
+    if (b._html !== html) { b._html = html; b.innerHTML = html; }
+    b.classList.remove('hidden');
+  }
+
+  // Muestra el combate del jugador que miras si lo tenemos; si no, su tablero.
+  syncCombatView() {
+    const ph = this.room?.phase;
+    const c = ph === 'combat' || ph === 'results' ? this.combatFor(this.viewedId()) : null;
+    if (c) { if (this.fight?.id !== c.id) this.showCombat(c, false); return; }
+    if (this.fight) this.exitCombat();
+    else { this.mode = 'board'; this.refreshBoard(); }
   }
 
   // ───────────────────────── Bucle ─────────────────────────

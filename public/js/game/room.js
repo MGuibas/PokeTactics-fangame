@@ -152,8 +152,10 @@ export class GameRoom {
   resync(p) {
     p.dirty = true;
     this.roomDirty = true;
+    // Un cliente recién conectado empieza mirando su propia isla.
+    if (p.scout) { this.setScout(p, null); return; }
     const c = this.combatOf(p.id);
-    if (c && this.phase === 'combat') this.send(p.id, { t: 'cs', ...c.combat.initInfo(), viewer: p.id });
+    if (c && (this.phase === 'combat' || this.phase === 'results')) this.sendCombatInit(c, p.id);
   }
 
   // ───────────────────────── Ciclo de juego ─────────────────────────
@@ -986,7 +988,8 @@ export class GameRoom {
     p.avMoved = true;
     p.dirty = true;
     this.roomDirty = true;
-    if (this.phase === 'combat') {
+    // Estado actual del combate que pasa a mirar (también si ya ha terminado).
+    if (this.phase === 'combat' || this.phase === 'results') {
       const e = target ? this.combatOf(target) : this.combatOf(p.id);
       if (e) this.sendCombatInit(e, p.id);
     }
